@@ -264,7 +264,30 @@
 
 ---
 
-## 六、环境依赖备忘
+## 六、LaTeX 复制按钮截断修复 (2026-05-21)
+
+### 问题
+- 复制按钮用 `position:absolute` 定位在 `.katex-display` 内部
+- `.katex-display` 设置了 `overflow-x:auto`，CSS 规范中 overflow-x 非 visible 时 overflow-y 隐式变为 auto
+- 导致按钮在公式高度不够时被垂直裁剪（上下截断）
+
+### 修复方案：Wrapper 包裹
+- **app.js**：在 `.katex-display` 外包一层 `.katex-display-wrap` div，按钮 append 到 wrap 上（而非 overflow 容器内）
+- **styles.css**：`.katex-display-wrap { position:relative }` 承载按钮定位，hover 效果也移到 wrap 上
+- `.katex-display` 保留 `overflow-x:auto` 只管公式横向滚动，不影响按钮显示
+
+### 代码关联
+- `app.js` L161-176：`postRenderEnhance` 中块级公式处理逻辑
+- `styles.css` L333-346：`.katex-display-wrap` + `.latex-copy-btn` 样式
+- 防重复：通过 `display.parentElement.classList.contains('katex-display-wrap')` 判断
+
+### 教训
+- ⚠️ 上次直接改 `.katex-display` 的 overflow-y:visible 导致按钮完全消失（原因不明，可能触发了 KaTeX 内部布局问题）
+- 正确做法：不动 `.katex-display` 本身的样式，用外层 wrapper 隔离 overflow 和 absolute 定位的冲突
+
+---
+
+## 七、环境依赖备忘
 
 ### Rust / Tauri 开发环境
 - Rust 工具链：`~/.cargo/bin`（需 `source ~/.cargo/env` 或写入 `~/.zshrc`）
@@ -277,3 +300,205 @@
 - `cargo-tauri` 不在全局 PATH 时会报 `no such command: tauri`
 - 前端改动（app.js/styles.css）不需要重编译 Tauri，只需重启应用（前端由 bridge serve）
 - 但如果 Tauri 进程已退出，需要 `cargo tauri dev` 重新启动
+
+---
+
+## 八、IME 输入法回车问题修复（2026-05-21）
+
+### 问题
+中文输入法下打英文字母，按回车想让英文上屏，但消息被直接发送给大模型。
+
+### 根因
+`inputEl` 的 `keydown` 监听中，`e.key === 'Enter'` 直接触发 `submitInput()`，无 IME 状态判断。
+
+### 尝试过的方案（失败）
+1. `compositionstart/end` + `_isComposing` 标志 → macOS WebKit 中 IME 确认英文上屏时不触发 composition 事件
+2. `_imeJustConfirmed` + `setTimeout(20ms)` → 同上原因，标记无法生效
+3. `e.isComposing` 属性检查 → macOS WebKit 中该属性为 false
+
+### 最终方案（成功）
+```javascript
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault(); submitInput();
+  }
+});
+```
+- `e.keyCode === 229`：W3C UI Events 标准，IME 处理中的按键 keyCode 固定为 229
+- 跨平台兼容：macOS WebKit ✓ | Windows WebView2(Chromium) ✓ | Linux WebKitGTK ✓
+
+### 代码位置
+- `app.js` L582-585（inputEl keydown 监听）
+
+### 关联
+- `submitInput()` 函数（L574）
+- `sendBtn` click 事件（L582）— 不受影响，按钮发送无需 IME 判断
+
+
+---
+
+## 九、Assistant 气泡宽度统一（2026-05-21）
+
+### 问题
+Assistant 消息气泡宽度随内容变化不固定，短回复窄、长回复宽，视觉不整齐。
+
+### 根因
+`.bubble.md` 只设了 `max-width:100%`，未设 `width`，宽度由内容撑开。
+
+### 修复
+在 `styles.css` 的 `.bubble.md` 规则中加 `width:100%`：
+```css
+.bubble.md{ white-space:normal; background:var(--line-soft); color:var(--txt); max-width:100%; width:100%; }
+```
+
+### 效果
+- Assistant 消息统一占满容器宽度（与 ChatGPT/Claude 等主流 AI 聊天界面一致）
+- User 消息（`.bubble` 无 `.md` 类）仍保持 `max-width:80%` 自适应宽度靠右
+
+### 代码位置
+- `styles.css` L300（`.bubble.md` 规则）
+
+### 关联
+- `.msgs` 容器 `max-width:760px`（L290）— 决定了气泡最大物理宽度
+- `.msg.assistant` 的 `justify-content:flex-start`（L293）— 气泡靠左
+- User 气泡 `.bubble`（L295-298）— 不受影响
+
+
+---
+
+## 十、统一复制 Icon 功能 (2026-05-21)
+
+### 需求
+- 给 user 和 assistant 聊天气泡添加复制按钮（hover 显示）
+- 统一代码块、LaTeX 块级公式、气泡的复制按钮都使用同一个 SVG icon（经典双矩形复制图标）
+- 替换原来的文字"复制"按钮
+
+### 实现
+
+**app.js 变更：**
+1. L16-18: 新增 `SVG_COPY_ICON` 常量（14x14 双矩形 SVG，stroke=currentColor）
+2. L327-345 `msgNode()`: 给每个 bubble 添加 `.bubble-copy-btn`，点击复制气泡纯文本（user）或原始 markdown（assistant）
+3. L136-150 `postRenderEnhance` 代码块: `btn.innerHTML = SVG_COPY_ICON` 替代 `btn.textContent`
+4. L168-185 `postRenderEnhance` LaTeX块级: `btn.innerHTML = SVG_COPY_ICON` 替代 `btn.textContent`
+
+**styles.css 变更：**
+1. `.bubble` 添加 `position:relative`（支持绝对定位子按钮）
+2. `.code-copy-btn` 改为 `padding:4px; font-size:0; display:flex; align-items:center; justify-content:center` + `svg{ width:14px; height:14px; }`
+3. `.latex-copy-btn` 同上适配
+4. 新增 `.bubble-copy-btn` 样式：`position:absolute; top:6px; right:6px; opacity:0; .bubble:hover &{ opacity:1; }`
+
+### 代码关联
+- `SVG_COPY_ICON` 被 3 处引用：msgNode、代码块复制、LaTeX复制
+- `.bubble-copy-btn` 依赖 `.bubble{ position:relative }` 才能正确定位
+- 复制内容来源：user 用 `bubble.textContent`，assistant 用 `msg.text`（原始 markdown）
+- 代码块复制内容：`pre > code.textContent`
+- LaTeX复制内容：`data-latex` 属性存储的原始 LaTeX 源码
+
+### 注意事项
+- 三种复制按钮都是 hover 才显示（opacity 过渡）
+- SVG 用 `stroke:currentColor` 继承按钮颜色，无硬编码颜色
+- 复制成功后短暂改变按钮样式（可后续添加 checkmark 反馈）
+
+
+---
+
+## 十一、复制按钮位置优化 + assistant只复制最后一轮 (2026-05-21)
+
+### 需求
+1. 复制icon透明背景，移到气泡外面（不遮挡文字）
+2. user的复制按钮放在气泡右下角（下方），assistant的放在左下角
+3. assistant复制只复制最后一轮内容（按Turn marker分割取最后一段）
+
+### 实现
+
+**app.js 变更**:
+- `msgNode` 中 copyBtn 从 `bubble.appendChild` 改为 `el.appendChild`（.msg层级）
+- assistant复制逻辑：按 `**LLM Running (Turn N)...**` 正则分割原始content，取 `parts[parts.length-1].trim()`
+- user复制逻辑不变：直接复制 `msg.content`
+
+**styles.css 变更**:
+- `.msg` 添加 `flex-wrap:wrap; position:relative;`
+- `.bubble-copy-btn` 改为：
+  - 去掉 `position:absolute`，改为 `flex-basis:100%` 自然换行到气泡下方
+  - `background:transparent; border:none;`（透明背景）
+  - `display:inline-flex;`
+  - hover触发改为 `.msg:hover .bubble-copy-btn`（而非 `.bubble:hover`）
+- `.msg.user .bubble-copy-btn { justify-content:flex-end; }` → 右对齐
+- `.msg.assistant .bubble-copy-btn { justify-content:flex-start; }` → 左对齐
+
+### 代码关联
+- copyBtn 现在是 `.msg` 的直接子元素，不再依赖 `.bubble` 的 `position:relative`
+- Turn分割正则与 `renderAssistant` 中的 `turnMarker` 一致
+- `flex-wrap:wrap` 可能影响 `.msg.system` 布局（但system消息无copyBtn，无影响）
+
+### 注意事项
+- assistant复制的是原始markdown文本（最后一轮），不是渲染后的HTML
+- 如果消息没有Turn marker，则复制全部content
+
+
+---
+
+## 十二、流式生成时智能滚动 + 增量渲染（2026-05-21）
+
+### 问题
+1. 模型生成时强制把页面拉到最下面，用户无法查看中间内容
+2. 每次流式更新都重写整个draftEl的innerHTML，导致用户展开的折叠框被重置
+
+### 修复方案
+
+#### A. 智能滚动 (scrollBottom)
+- 改为接受 `force` 参数：`scrollBottom(force)`
+- 非force时检测 `isNearBottom()`：只有用户已在底部（距底≤80px）才自动滚动
+- `renderAllMessages` 和 `appendMessage` 传 `force=true`（切换会话/发送消息时强制滚底）
+- `renderDraft` 不传force（流式更新时智能判断）
+
+#### B. 增量渲染 (renderDraft)
+- 按 turn 分隔符分割内容
+- 已完成的历史 turn 只在首次出现时渲染一次，之后冻结为 `.draft-turn-frozen` DOM节点
+- 只更新最后一段（`.draft-live-zone`）的 innerHTML
+- 历史 turn 中的 `<details open>` 状态不会被重写覆盖
+
+### 代码变更 (app.js)
+- `scrollBottom(force)` — 新增 `isNearBottom()` 检测
+- `renderDraft(sess)` — 完全重写为增量渲染逻辑
+- `renderAllMessages` / `appendMessage` — `scrollBottom(true)`
+
+### 代码关联
+- `renderDraft` 依赖 `foldBlocks(text, isLastTurn)` 进行块级折叠
+- `postRenderEnhance` 对冻结的历史turn只调用一次
+- `r._renderedTurnCount` 跟踪已冻结的turn数量
+- 智能滚动影响所有调用 `scrollBottom()` 的地方
+
+### 注意事项
+- 如果用户滚动到底部附近（≤80px），新内容会自动滚动跟随
+- 如果用户主动向上滚动查看历史，不会被强制拉回底部
+- 切换会话时始终强制滚到底部
+
+
+### Bug修复 (2026-05-21)
+
+**Bug1: 流式生成时历史turn不折叠**
+- 根因：renderDraft增量渲染中，冻结的历史turn只做了块级折叠(foldBlocks)，但没有包裹Turn级`<details class="fold fold-turn">`
+- 修复：历史turn冻结时，提取summary/tool名作为标题，包裹成`<details class="fold fold-turn"><summary>title</summary><div class="fold-body">body</div></details>`
+- 与renderAssistant中的Turn级折叠逻辑保持一致
+
+**Bug2: Turn标题格式不一致**
+- 根因：renderAssistant中有summary时title只显示summary内容，缺少"Turn N ·"前缀
+- 修复：统一为 `${FOLD_LABELS.turn} ${i+1} · ${summary/toolName}`
+
+### 代码关联更新
+- renderDraft L421-445: 历史turn冻结逻辑（与renderAssistant L210-228的Turn级折叠保持一致）
+- 两处都使用 `FOLD_LABELS.turn` + `escapeHtml(title)` + `<details class="fold fold-turn">`
+
+
+**Bug3: 流式生成时历史turn折叠框点不开、内容为空**
+- 现象：流式生成过程中，历史turn显示折叠标题但点不开/内容为空；生成完成后显示正常
+- 根因：循环边界错误。`for (let i = r._renderedTurnCount; i < totalTurns; i++)` 会把最后一个marker后面**正在生成的活跃区**也冻结——此时内容为空或不完整
+- 原理：当有N个turn marker时，turnParts有N+1段。最后一段(turnParts[N])是最后一个marker后面正在生成的内容，不应该被冻结
+- 修复：引入`completedTurns = Math.max(0, totalTurns - 1)`，循环上界改为`completedTurns`，`_renderedTurnCount = completedTurns`
+- 一个turn只有当后面出现了新的marker时才算"完成"可以被冻结
+- 位置：app.js L418-451
+
+### 代码关联更新
+- renderDraft增量渲染：completedTurns = totalTurns - 1（只冻结已确认完成的turn）
+- 活跃区始终是turnParts[turnParts.length - 1]（最后一个marker后面的内容）

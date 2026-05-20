@@ -14,6 +14,10 @@ const FOLD_LABELS = {
   latexCopied: '已复制 LaTeX',
 };
 
+/* ───────────── 统一复制 SVG Icon ───────────── */
+const SVG_COPY_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
 /* ───────────── 开发脚手架：标注层（默认关，fab 可切）───────────── */
 const app = document.getElementById('app');
 const annotBtn = document.getElementById('toggle-annot');
@@ -134,11 +138,11 @@ function postRenderEnhance(containerEl) {
     if (pre.querySelector('.code-copy-btn')) return; // 已有
     const btn = document.createElement('button');
     btn.className = 'code-copy-btn';
-    btn.textContent = FOLD_LABELS.copy || '复制';
+    btn.innerHTML = SVG_COPY_ICON;
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText(block.textContent).then(() => {
-        btn.textContent = FOLD_LABELS.copied || '已复制';
-        setTimeout(() => { btn.textContent = FOLD_LABELS.copy || '复制'; }, 1500);
+        btn.innerHTML = SVG_CHECK_ICON;
+        setTimeout(() => { btn.innerHTML = SVG_COPY_ICON; }, 1500);
       });
     });
     pre.style.position = 'relative';
@@ -157,22 +161,25 @@ function postRenderEnhance(containerEl) {
     el.appendChild(tip);
     setTimeout(() => tip.remove(), 1500);
   }
-  // 块级公式：添加复制按钮
+  // 块级公式：包 wrapper + 添加复制按钮
   containerEl.querySelectorAll('.katex-display').forEach(display => {
-    if (display.querySelector('.latex-copy-btn')) return;
+    if (display.parentElement && display.parentElement.classList.contains('katex-display-wrap')) return;
     const src = getLatexSource(display);
     if (!src) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'katex-display-wrap';
+    display.parentNode.insertBefore(wrap, display);
+    wrap.appendChild(display);
     const btn = document.createElement('button');
     btn.className = 'latex-copy-btn';
-    btn.textContent = FOLD_LABELS.copy || '复制';
+    btn.innerHTML = SVG_COPY_ICON;
     btn.addEventListener('click', () => {
       navigator.clipboard.writeText('$$' + src + '$$').then(() => {
-        btn.textContent = FOLD_LABELS.copied || '已复制';
-        setTimeout(() => { btn.textContent = FOLD_LABELS.copy || '复制'; }, 1500);
+        btn.innerHTML = SVG_CHECK_ICON;
+        setTimeout(() => { btn.innerHTML = SVG_COPY_ICON; }, 1500);
       });
     });
-    display.style.position = 'relative';
-    display.appendChild(btn);
+    wrap.appendChild(btn);
   });
   // 行内公式：点击复制
   containerEl.querySelectorAll('.katex:not(.katex-display .katex)').forEach(span => {
@@ -206,7 +213,7 @@ function renderAssistant(text) {
       const sumMatch = content.match(/<summary>([\s\S]*?)<\/summary>/i);
       let title;
       if (sumMatch) {
-        title = sumMatch[1].trim().slice(0, 60);
+        title = `${FOLD_LABELS.turn} ${i + 1} · ${sumMatch[1].trim().slice(0, 50)}`;
       } else {
         // Fallback: extract first tool name from content as hint
         const toolMatch = content.match(/Tool:\s*`([^`]+)`/);
@@ -221,15 +228,15 @@ function renderAssistant(text) {
     }
     // 最新turn展开（内部块级折叠仍生效）
     const lastContent = turnParts[turnMarkers.length];
-    segments.push(foldBlocks(lastContent));
+    segments.push(foldBlocks(lastContent, true));
     return segments.join('');
   }
 
-  return foldBlocks(s);
+  return foldBlocks(s, true);
 }
 
 // 块级折叠：工具调用(🛠️) / 工具结果(`````) / summary
-function foldBlocks(text) {
+function foldBlocks(text, isLastTurn) {
   let s = String(text || '');
   const folds = [];
   const stash = (label, body, cls) => {
@@ -258,7 +265,12 @@ function foldBlocks(text) {
       return stash(label, body.trim(), 'fold-tool');
     });
 
-  // 3) <summary>标签去掉（已用于turn标题）
+  // 3) <summary>处理：最后一轮包裹为斜体弱化显示，其他轮直接去掉标签
+  if (isLastTurn) {
+    s = s.replace(/<summary>([\s\S]*?)<\/summary>/gi, (_, inner) => {
+      return `<span class="turn-summary">${inner.trim()}</span>\n\n`;
+    });
+  }
   s = s.replace(/<\/?summary>/gi, '');
 
   let html = renderMarkdown(s);
@@ -327,6 +339,32 @@ function msgNode(msg) {
   } else {
     el.innerHTML = `<div class="bubble sys">${escapeHtml(msg.content)}</div>`;
   }
+  // 给 user 和 assistant 气泡添加复制按钮（放在气泡外面）
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'bubble-copy-btn';
+    copyBtn.innerHTML = SVG_COPY_ICON;
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      let text;
+      if (msg.role === 'user') {
+        text = msg.content;
+      } else {
+        // assistant: 只复制最后一轮内容，排除<summary>
+        const raw = msg.content || '';
+        const turnMarker = /\*\*LLM Running \(Turn \d+\).*?\*\*/g;
+        const parts = raw.split(turnMarker);
+        let lastPart = (parts[parts.length - 1] || raw).trim();
+        lastPart = lastPart.replace(/<summary>[\s\S]*?<\/summary>/gi, '').trim();
+        text = lastPart;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = SVG_CHECK_ICON;
+        setTimeout(() => { copyBtn.innerHTML = SVG_COPY_ICON; }, 1500);
+      });
+    });
+    el.appendChild(copyBtn);
+  }
   return el;
 }
 function renderAllMessages(sess) {
@@ -334,16 +372,21 @@ function renderAllMessages(sess) {
   box.innerHTML = '';
   for (const m of sess.messages) box.appendChild(msgNode(m));
   refreshEmptyState(sess);
-  scrollBottom();
+  scrollBottom(true);
 }
 function appendMessage(sess, msg) {
   if (!isActive(sess)) return;
   ensureMsgs().appendChild(msgNode(msg));
   refreshEmptyState(sess);
-  scrollBottom();
+  scrollBottom(true);
 }
-function scrollBottom() {
-  requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; });
+function isNearBottom(threshold = 80) {
+  return msgArea.scrollHeight - msgArea.scrollTop - msgArea.clientHeight < threshold;
+}
+function scrollBottom(force) {
+  if (force || isNearBottom()) {
+    requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; });
+  }
 }
 function renderDraft(sess) {
   const r = rt(sess);
@@ -353,11 +396,74 @@ function renderDraft(sess) {
     r.draftEl = document.createElement('div');
     r.draftEl.className = 'msg assistant';
     box.appendChild(r.draftEl);
+    r._renderedTurnCount = 0; // 已渲染且冻结的历史turn数
   }
-  r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(r.draftText)}<span class="cursor"></span></div>`;
-  // 节流后渲染增强（代码高亮+复制按钮），避免流式输出时频繁调用
+
+  // 按turn分割内容
+  const text = String(r.draftText || '');
+  const turnSep = /\**LLM Running \(Turn \d+\) \.\.\.\**/g;
+  const turnParts = text.split(turnSep);
+  const turnMarkers = text.match(turnSep) || [];
+  const totalTurns = turnMarkers.length; // 已完成的历史turn数（最后一段是当前正在生成的）
+
+  // 确保bubble容器存在
+  let bubble = r.draftEl.querySelector('.bubble.md');
+  if (!bubble) {
+    bubble = document.createElement('div');
+    bubble.className = 'bubble md';
+    r.draftEl.appendChild(bubble);
+    r._renderedTurnCount = 0;
+  }
+
+  // 增量渲染：只追加新完成的历史turn，不重写已有的
+  // 一个turn只有当后面出现了新的marker时才算"完成"，所以冻结到 totalTurns-1
+  const completedTurns = Math.max(0, totalTurns - 1);
+  if (completedTurns > r._renderedTurnCount) {
+    // 有新的历史turn完成了，追加它们（冻结，不再更新）
+    for (let i = r._renderedTurnCount; i < completedTurns; i++) {
+      const turnDiv = document.createElement('div');
+      turnDiv.className = 'draft-turn-frozen';
+      // turnParts[i+1] 是 turnMarkers[i] 之后的内容
+      const turnContent = turnParts[i + 1] || '';
+      // Turn级折叠：和renderAssistant一致，包裹成<details>
+      const sumMatch = turnContent.match(/<summary>([\s\S]*?)<\/summary>/i);
+      let title;
+      if (sumMatch) {
+        title = `${FOLD_LABELS.turn} ${i + 1} · ${sumMatch[1].trim().slice(0, 50)}`;
+      } else {
+        const toolMatch = turnContent.match(/Tool:\s*`([^`]+)`/);
+        title = toolMatch
+          ? `${FOLD_LABELS.turn} ${i + 1} · ${toolMatch[1]}`
+          : `${FOLD_LABELS.turn} ${i + 1}`;
+      }
+      const body = foldBlocks(turnContent, false);
+      turnDiv.innerHTML = `<details class="fold fold-turn"><summary>${escapeHtml(title)}</summary><div class="fold-body">${body}</div></details>`;
+      // 插入到cursor/活跃区之前
+      const liveZone = bubble.querySelector('.draft-live-zone');
+      if (liveZone) {
+        bubble.insertBefore(turnDiv, liveZone);
+      } else {
+        bubble.appendChild(turnDiv);
+      }
+      // 对冻结的turn做渲染增强
+      postRenderEnhance(turnDiv);
+    }
+    r._renderedTurnCount = completedTurns;
+  }
+
+  // 更新最后一段（正在生成的活跃区）——只重写这部分
+  let liveZone = bubble.querySelector('.draft-live-zone');
+  if (!liveZone) {
+    liveZone = document.createElement('div');
+    liveZone.className = 'draft-live-zone';
+    bubble.appendChild(liveZone);
+  }
+  const lastPart = turnParts[turnParts.length - 1] || '';
+  liveZone.innerHTML = foldBlocks(lastPart, true) + '<span class="cursor"></span>';
+
+  // 节流后对活跃区做渲染增强
   clearTimeout(r._enhanceTimer);
-  r._enhanceTimer = setTimeout(() => postRenderEnhance(r.draftEl.querySelector('.bubble.md')), 300);
+  r._enhanceTimer = setTimeout(() => postRenderEnhance(liveZone), 300);
   refreshEmptyState(sess);
   scrollBottom();
 }
@@ -578,7 +684,7 @@ function submitInput() {
 }
 sendBtn.addEventListener('click', (e) => { e.preventDefault(); submitInput(); });
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitInput(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submitInput(); }
 });
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
