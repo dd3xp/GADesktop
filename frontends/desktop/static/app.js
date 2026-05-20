@@ -353,6 +353,8 @@ const state = {
   sessions: new Map(), activeId: null, bridgeReady: false,
   llmNo: 0, modelProfiles: [], modelName: null,
   runtime: new Map(),
+  planMode: false, autoMode: false,
+  pendingImages: [],
 };
 function rt(sess) {
   let r = state.runtime.get(sess.id);
@@ -953,6 +955,26 @@ if (addModelForm) addModelForm.addEventListener('submit', async (e) => {
 const uploadBtn = chatPage.querySelector('.composer-top .ic-btn');
 if (uploadBtn) uploadBtn.addEventListener('click', (e) => { e.preventDefault(); showSystem(t('upload.hint')); });
 
+/* ═══════════════ Plan / Auto toggle ═══════════════ */
+const planChip = document.getElementById('plan-chip');
+const autoChip = document.getElementById('auto-chip');
+function applyToggleClass() {
+  if (planChip) planChip.classList.toggle('on', state.planMode);
+  if (autoChip) autoChip.classList.toggle('on', state.autoMode);
+}
+if (planChip) planChip.addEventListener('click', (e) => {
+  e.preventDefault();
+  state.planMode = !state.planMode;
+  localStorage.setItem('ga_plan', state.planMode ? '1' : '0');
+  applyToggleClass();
+});
+if (autoChip) autoChip.addEventListener('click', (e) => {
+  e.preventDefault();
+  state.autoMode = !state.autoMode;
+  localStorage.setItem('ga_auto', state.autoMode ? '1' : '0');
+  applyToggleClass();
+});
+
 /* ═══════════════ bridge 事件 ═══════════════ */
 window.ga.onBridgeReady(async () => {
   state.bridgeReady = true;
@@ -1103,6 +1125,9 @@ nav.addEventListener('click',(e)=>{const item=e.target.closest('.nav-item');if(i
 /* ═══════════════ 启动 ═══════════════ */
 applyAppearance(appearance, plainUi);
 applyTheme(theme);
+state.planMode = localStorage.getItem('ga_plan') === '1';
+state.autoMode = localStorage.getItem('ga_auto') === '1';
+applyToggleClass();
 applyI18n();
 updateModelChip();
 renderSessionList();
