@@ -459,13 +459,62 @@ function renderDraft(sess) {
     bubble.appendChild(liveZone);
   }
   const lastPart = turnParts[turnParts.length - 1] || '';
-  liveZone.innerHTML = foldBlocks(lastPart, true) + '<span class="cursor"></span>';
+
+  // Typewriter: 基于时间的均匀逐字输出
+  // 测量实际batch到达间隔，把字符均匀分布在预估的下一个间隔内
+  if (!r._tw) r._tw = { displayed: 0, target: '', timerId: 0, lastTime: 0, avgInterval: 300 };
+  const tw = r._tw;
+  const now = performance.now();
+  const newChars = lastPart.length - tw.target.length;
+  tw.target = lastPart;
+
+  if (newChars > 0 && tw.lastTime > 0) {
+    // 测量本次batch实际间隔，用指数移动平均平滑
+    const elapsed = now - tw.lastTime;
+    tw.avgInterval = tw.avgInterval * 0.6 + elapsed * 0.4;
+  }
+  if (newChars > 0) tw.lastTime = now;
+
+  // 启动/重启定时器：把积压字符均匀分布在avgInterval时间内
+  if (!tw.timerId && tw.displayed < tw.target.length) {
+    const startTick = () => {
+      const backlog = tw.target.length - tw.displayed;
+      if (backlog <= 0) { clearInterval(tw.timerId); tw.timerId = 0; return; }
+      // 每个字符的间隔 = 预估下次batch到达时间 / 积压字符数
+      // 但至少16ms(60fps)，至多80ms(不能太慢)
+      const perChar = Math.max(16, Math.min(80, tw.avgInterval / backlog));
+      clearInterval(tw.timerId);
+      tw.timerId = setInterval(() => {
+        if (tw.displayed >= tw.target.length) {
+          clearInterval(tw.timerId); tw.timerId = 0; return;
+        }
+        tw.displayed++;
+        const slice = tw.target.slice(0, tw.displayed);
+        liveZone.innerHTML = foldBlocks(slice, true) + '<span class="cursor"></span>';
+        scrollBottom();
+      }, perChar);
+    };
+    startTick();
+  } else if (tw.timerId && newChars > 0) {
+    // 新batch到达，重新计算速度
+    const backlog = tw.target.length - tw.displayed;
+    const perChar = Math.max(16, Math.min(80, tw.avgInterval / backlog));
+    clearInterval(tw.timerId);
+    tw.timerId = setInterval(() => {
+      if (tw.displayed >= tw.target.length) {
+        clearInterval(tw.timerId); tw.timerId = 0; return;
+      }
+      tw.displayed++;
+      const slice = tw.target.slice(0, tw.displayed);
+      liveZone.innerHTML = foldBlocks(slice, true) + '<span class="cursor"></span>';
+      scrollBottom();
+    }, perChar);
+  }
 
   // 节流后对活跃区做渲染增强
   clearTimeout(r._enhanceTimer);
   r._enhanceTimer = setTimeout(() => postRenderEnhance(liveZone), 300);
   refreshEmptyState(sess);
-  scrollBottom();
 }
 
 /* ───────────── 运行状态（顶栏；运行中点击=停止）───────────── */
@@ -600,6 +649,9 @@ function upsert(sess, raw, partial) {
   r.lastId = Math.max(r.lastId, m.id);
   // 草稿落地：assistant 终稿替换草稿
   if (m.role === 'assistant' && r.draftEl) {
+    // flush typewriter: 取消定时器，确保不丢内容
+    if (r._tw && r._tw.timerId) { clearInterval(r._tw.timerId); r._tw.timerId = 0; }
+    r._tw = null;
     r.draftEl.remove(); r.draftEl = null; r.draftText = '';
   }
   sess.messages.push(m);
@@ -619,7 +671,7 @@ async function pollSession(sess) {
       if (result.partial) upsert(sess, result.partial, true);
       const busy = result.status === 'running' || !!result.partial;
       setBusy(sess, busy);
-      if (busy) await new Promise(z => setTimeout(z, 500));
+      if (busy) await new Promise(z => setTimeout(z, 200));
       else { if (r.draftEl) { r.draftEl.remove(); r.draftEl = null; } break; }
     } while (true);
   } catch (e) {
