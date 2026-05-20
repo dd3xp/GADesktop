@@ -54,6 +54,7 @@ const I18N = {
     'upload.button': '上传图片',
     'upload.tooLarge': '图片过大或格式不支持',
     'upload.removeTitle': '移除',
+    'upload.dropHint': '松开以上传图片',
     'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running',
     'model.auto': '自动选择',
     'model.menuLabel': '选择模型',
@@ -124,6 +125,7 @@ const I18N = {
     'upload.button': 'Upload image',
     'upload.tooLarge': 'Image too large or unsupported',
     'upload.removeTitle': 'Remove',
+    'upload.dropHint': 'Drop to upload images',
     'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running',
     'model.auto': 'Auto',
     'model.menuLabel': 'Select model',
@@ -1040,6 +1042,7 @@ const MAX_IMG_BYTES = 10 * 1024 * 1024; // 10 MB
 const imgInput = document.getElementById('img-input');
 const thumbStrip = document.getElementById('thumb-strip');
 const uploadBtn = document.getElementById('upload-btn');
+const chatPanel = document.querySelector('main.main');
 
 function renderThumbStrip() {
   if (!thumbStrip) return;
@@ -1055,13 +1058,9 @@ function renderThumbStrip() {
   applyI18n();
 }
 
-if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
-  e.preventDefault();
-  imgInput.click();
-});
-
-if (imgInput) imgInput.addEventListener('change', () => {
-  const files = Array.from(imgInput.files || []);
+function addImageFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
   let skipped = false;
   const accepted = [];
   for (const f of files) {
@@ -1072,7 +1071,6 @@ if (imgInput) imgInput.addEventListener('change', () => {
   let pending = accepted.length;
   if (pending === 0) {
     if (skipped) showSystem(t('upload.tooLarge'));
-    imgInput.value = '';
     return;
   }
   for (const f of accepted) {
@@ -1090,6 +1088,15 @@ if (imgInput) imgInput.addEventListener('change', () => {
     };
     reader.readAsDataURL(f);
   }
+}
+
+if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  imgInput.click();
+});
+
+if (imgInput) imgInput.addEventListener('change', () => {
+  addImageFiles(imgInput.files);
   imgInput.value = '';
 });
 
@@ -1103,6 +1110,64 @@ if (thumbStrip) thumbStrip.addEventListener('click', (e) => {
     renderThumbStrip();
   }
 });
+
+/* ─── drag & drop on chat panel ─── */
+if (chatPanel) {
+  let dragDepth = 0;
+  const hasFiles = (e) => {
+    const types = e.dataTransfer && e.dataTransfer.types;
+    if (!types) return false;
+    for (let i = 0; i < types.length; i += 1) {
+      if (types[i] === 'Files') return true;
+    }
+    return false;
+  };
+  // Prevent the browser from opening dropped files outside chatPanel.
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('drop',     (e) => { if (hasFiles(e)) e.preventDefault(); });
+  chatPanel.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+    chatPanel.classList.add('dragover');
+    chatPanel.dataset.dropHint = t('upload.dropHint');
+  });
+  chatPanel.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  chatPanel.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) chatPanel.classList.remove('dragover');
+  });
+  chatPanel.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    chatPanel.classList.remove('dragover');
+    addImageFiles(e.dataTransfer.files);
+  });
+}
+
+/* ─── paste image into composer ─── */
+if (inputEl) {
+  inputEl.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const files = [];
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    addImageFiles(files);
+  });
+}
 
 /* ═══════════════ 语言切换 ═══════════════ */
 if (langSel) {

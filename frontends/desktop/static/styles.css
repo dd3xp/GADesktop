@@ -784,3 +784,18 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
   padding:0;
 }
 .thumb .x:hover{ color:var(--danger); }
+
+/* ─── chat panel: drag-over overlay ─── */
+.main.dragover{ position:relative; }
+.main.dragover::after{
+  content: attr(data-drop-hint);
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--blue-bg);
+  color:var(--blue);
+  border:2px dashed var(--blue);
+  border-radius:14px;
+  font-size:15px; font-weight:600;
+  pointer-events:none;
+  z-index:50;
+}
