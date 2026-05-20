@@ -675,8 +675,7 @@ async function sendPrompt(text) {
   const userMsg = { role: 'user', content: text };
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
   if (sess.untitled || isUntitled(sess.title)) {
-    const titleSrc = text || (images.length ? '[image]' : '');
-    sess.title = titleSrc.slice(0, 40) + (titleSrc.length > 40 ? '…' : '');
+    sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
     sess.untitled = false; renderSessionList();
   }
   setBusy(sess, true);
