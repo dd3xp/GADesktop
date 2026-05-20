@@ -660,22 +660,32 @@ async function pollSession(sess) {
 /* ═══════════════ 发送 / 取消 ═══════════════ */
 async function sendPrompt(text) {
   text = String(text || '').trim();
-  if (!text) return;
+  if (!text && state.pendingImages.length === 0) return;
   if (!state.bridgeReady) { showError(t('err.bridge')); return; }
   if (!state.activeId) { await newSession(); if (!state.activeId) return; }
   const sess = activeSess(); const r = rt(sess);
   if (r.busy) return;
+  const planPrefix = state.planMode ? t('presetPrompt.planMode') : '';
+  const autoPrefix = state.autoMode ? t('presetPrompt.autoMode') : '';
+  const composedPrompt = [planPrefix, autoPrefix, text]
+    .map(s => (s || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+  const images = state.pendingImages;
   const userMsg = { role: 'user', content: text };
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
   if (sess.untitled || isUntitled(sess.title)) {
-    sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
+    const titleSrc = text || (images.length ? '[image]' : '');
+    sess.title = titleSrc.slice(0, 40) + (titleSrc.length > 40 ? '…' : '');
     sess.untitled = false; renderSessionList();
   }
   setBusy(sess, true);
   try {
     const sid = await ensureBridgeSession(sess);
-    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: text, images: [], llmNo: state.llmNo });
+    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, images, llmNo: state.llmNo });
     if (res?.error) throw new Error(res.error.message || res.error);
+    state.pendingImages = [];
+    renderThumbStrip();
     const uid = Number(res.userMessageId || res.result?.userMessageId || 0);
     if (uid) { r.seen.add(uid); r.lastId = Math.max(r.lastId, uid); }
     pollSession(sess);
@@ -698,7 +708,7 @@ async function cancelPrompt() {
 /* ═══════════════ 输入区 / slash / 预设 ═══════════════ */
 function submitInput() {
   const text = inputEl.value;
-  if (!text.trim()) return;
+  if (!text.trim() && state.pendingImages.length === 0) return;
   inputEl.value = ''; inputEl.style.height = 'auto';
   if (text.trim().startsWith('/')) { handleSlash(text.trim()); return; }
   sendPrompt(text);
