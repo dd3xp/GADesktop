@@ -895,12 +895,65 @@ async function loadModelProfiles() {
 }
 if (modelChip) modelChip.addEventListener('click', (e) => {
   e.preventDefault();
-  const list = state.modelProfiles || [];
-  if (!list.length) { openSettings(); return; }
-  const idx = list.findIndex(p => (p.id ?? 0) === state.llmNo);
-  const next = list[(idx + 1) % list.length];
-  selectModel(next.id ?? 0, next.name);
+  e.stopPropagation();
+  openModelMenu();
 });
+
+/* ═══════════════ 模型菜单 ═══════════════ */
+const modelMenu = document.getElementById('model-menu');
+function renderModelMenu() {
+  if (!modelMenu) return;
+  const list = state.modelProfiles || [];
+  const rows = [];
+  const autoActive = (state.llmNo === 0) ? ' active' : '';
+  rows.push(`<div class="ga-menu-item${autoActive}" data-llmno="0"><span data-i18n="model.auto"></span></div>`);
+  list.forEach((p, i) => {
+    const no = (i + 1);
+    const isActive = (state.llmNo === (p.id ?? no)) ? ' active' : '';
+    const label = escapeHtml(p.name || '');
+    rows.push(`<div class="ga-menu-item${isActive}" data-llmno="${no}">${label}</div>`);
+  });
+  modelMenu.innerHTML = rows.join('');
+  applyI18n();
+}
+function openModelMenu() {
+  if (!modelMenu || !modelChip) return;
+  if (convMenu) convMenu.hidden = true;
+  renderModelMenu();
+  modelMenu.hidden = false;
+  const chipRect = modelChip.getBoundingClientRect();
+  const composer = modelChip.closest('.composer');
+  if (composer) {
+    const composerRect = composer.getBoundingClientRect();
+    modelMenu.style.left = (chipRect.left - composerRect.left) + 'px';
+    modelMenu.style.bottom = (composerRect.bottom - chipRect.top + 4) + 'px';
+  }
+}
+function closeModelMenu() { if (modelMenu) modelMenu.hidden = true; }
+if (modelMenu) modelMenu.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const item = e.target.closest('.ga-menu-item');
+  if (!item) return;
+  const no = parseInt(item.dataset.llmno, 10) || 0;
+  state.llmNo = no;
+  if (no === 0) {
+    state.modelName = '';
+  } else {
+    const p = (state.modelProfiles || [])[no - 1];
+    state.modelName = (p && p.name) || '';
+  }
+  updateModelChip();
+  closeModelMenu();
+});
+document.addEventListener('click', (e) => {
+  if (!modelMenu || modelMenu.hidden) return;
+  if (e.target.closest('#model-menu') || e.target.closest('#model-chip')) return;
+  closeModelMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modelMenu && !modelMenu.hidden) closeModelMenu();
+});
+
 const themeSwatches = document.getElementById('theme-swatches');
 if (themeSwatches) themeSwatches.addEventListener('click', (e) => {
   const sw = e.target.closest('.swatch[data-theme]');
