@@ -952,9 +952,6 @@ if (addModelForm) addModelForm.addEventListener('submit', async (e) => {
   }
 });
 
-const uploadBtn = chatPage.querySelector('.composer-top .ic-btn');
-if (uploadBtn) uploadBtn.addEventListener('click', (e) => { e.preventDefault(); showSystem(t('upload.hint')); });
-
 /* ═══════════════ Plan / Auto toggle ═══════════════ */
 const planChip = document.getElementById('plan-chip');
 const autoChip = document.getElementById('auto-chip');
@@ -974,6 +971,89 @@ if (autoChip) autoChip.addEventListener('click', (e) => {
   localStorage.setItem('ga_auto', state.autoMode ? '1' : '0');
   applyToggleClass();
 });
+
+/* ═══════════════ image upload ═══════════════ */
+const MAX_IMG_FILES = 10;
+const MAX_IMG_BYTES = 10 * 1024 * 1024; // 10 MB
+const imgInput = document.getElementById('img-input');
+const thumbStrip = document.getElementById('thumb-strip');
+const uploadBtn = document.getElementById('upload-btn');
+
+function renderThumbStrip() {
+  if (!thumbStrip) return;
+  if (state.pendingImages.length === 0) {
+    thumbStrip.innerHTML = '';
+    thumbStrip.hidden = true;
+    return;
+  }
+  thumbStrip.innerHTML = state.pendingImages.map(img =>
+    `<div class="thumb"><img src="${img.dataUrl}"><button class="x" data-id="${img.id}" data-i18n-title="upload.removeTitle" title="">×</button></div>`
+  ).join('');
+  thumbStrip.hidden = false;
+  applyI18n();
+}
+
+if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  imgInput.click();
+});
+
+if (imgInput) imgInput.addEventListener('change', () => {
+  const files = Array.from(imgInput.files || []);
+  let skipped = false;
+  const accepted = [];
+  for (const f of files) {
+    if (!f.type.startsWith('image/') || f.size > MAX_IMG_BYTES) { skipped = true; continue; }
+    if (state.pendingImages.length + accepted.length >= MAX_IMG_FILES) { skipped = true; break; }
+    accepted.push(f);
+  }
+  let pending = accepted.length;
+  if (pending === 0) {
+    if (skipped) showSystem(t('upload.tooLarge'));
+    imgInput.value = '';
+    return;
+  }
+  for (const f of accepted) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const id = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      state.pendingImages.push({ id, dataUrl: String(reader.result || '') });
+      renderThumbStrip();
+      pending -= 1;
+      if (pending === 0 && skipped) showSystem(t('upload.tooLarge'));
+    };
+    reader.onerror = () => {
+      pending -= 1;
+      if (pending === 0 && skipped) showSystem(t('upload.tooLarge'));
+    };
+    reader.readAsDataURL(f);
+  }
+  imgInput.value = '';
+});
+
+if (thumbStrip) thumbStrip.addEventListener('click', (e) => {
+  const x = e.target.closest('.x');
+  if (!x) return;
+  const id = x.dataset.id;
+  const idx = state.pendingImages.findIndex(img => img.id === id);
+  if (idx >= 0) {
+    state.pendingImages.splice(idx, 1);
+    renderThumbStrip();
+  }
+});
+
+/* ═══════════════ 语言切换 ═══════════════ */
+if (langSel) {
+  langSel.value = lang;
+  langSel.addEventListener('change', () => {
+    lang = (langSel.value === 'en') ? 'en' : 'zh';
+    localStorage.setItem('ga_lang', lang);
+    applyI18n();
+    renderSessionList();
+    refreshStatusLabel();
+    updateModelChip();
+  });
+}
 
 /* ═══════════════ bridge 事件 ═══════════════ */
 window.ga.onBridgeReady(async () => {
