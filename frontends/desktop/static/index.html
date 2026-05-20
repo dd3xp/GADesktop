@@ -136,7 +136,7 @@
           </div>
           <div class="composer">
             <div class="composer-top">
-              <button class="ic-btn">
+              <button class="ic-btn" id="upload-btn" data-i18n-title="upload.button" title="">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12 20.5a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
               <button class="ic-btn" id="preset-btn">
@@ -146,11 +146,11 @@
             <textarea class="input" data-i18n-ph="composer.placeholder" placeholder=""></textarea>
             <div class="composer-bot">
               <div class="cb-left">
-                <button class="chip" id="model-chip"><span class="model-name"></span> <svg class="chip-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
-                <button class="chip sm">Plan</button>
-                <button class="chip sm">
+                <button class="chip" id="model-chip" data-i18n-title="model.menuLabel" title=""><span class="model-name"></span> <svg class="chip-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <button class="chip sm" id="plan-chip"><span data-i18n="chip.plan"></span></button>
+                <button class="chip sm" id="auto-chip">
                   <svg class="chip-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 10 14 9 22 21 10 14 10 13 2"/></svg>
-                  Auto
+                  <span data-i18n="chip.auto"></span>
                 </button>
               </div>
               <button class="send">
