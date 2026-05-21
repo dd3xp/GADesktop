@@ -474,6 +474,7 @@ function selectLang(code) {
   refreshStatusLabel();
   updateModelChip();
   renderSettingsModels();
+  if (typeof renderAllPresets === 'function') renderAllPresets();
   if (document.querySelector('.page[data-page="channels"].active')) renderChannelList(gaServiceStore.list());
   if (document.querySelector('.page[data-page="status"].active')) loadStatusPanel();
 }
@@ -1587,20 +1588,6 @@ if (inputEl) {
     if (files.length === 0) return;
     e.preventDefault();
     addFiles(files);
-  });
-}
-
-/* ═══════════════ 语言切换 ═══════════════ */
-if (langSel) {
-  langSel.value = lang;
-  langSel.addEventListener('change', () => {
-    lang = (langSel.value === 'en') ? 'en' : 'zh';
-    localStorage.setItem('ga_lang', lang);
-    applyI18n();
-    renderSessionList();
-    refreshStatusLabel();
-    updateModelChip();
-    if (typeof renderAllPresets === 'function') renderAllPresets();
   });
 }
 
