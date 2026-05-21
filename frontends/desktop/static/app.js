@@ -1,8 +1,219 @@
-// GenericAgent 桌面版 —— 真实客户端逻辑（bridge 数据层 + i18n）。
-// 数据走 HTTP（window.ga / ga-web.js），WS 仅状态通知。
+// GenericAgent 桌面版 —— bridge 适配 + 业务 UI（HTTP 命令 / WS 状态 / i18n）。
 // 文案全部走 i18n：静态用 data-i18n / data-i18n-ph / data-i18n-title，
 // 动态用 t(key)。dev 标注层与发给 agent 的预设 prompt 不进 UI 字典。
 'use strict';
+
+/* ═══════════════ 进程状态 store ═══════════════ */
+const _serviceById = {};
+const _serviceListeners = new Set();
+
+function _serviceList() {
+  return Object.values(_serviceById).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+function _serviceNotify() {
+  const items = _serviceList();
+  for (const cb of _serviceListeners) {
+    try { cb(items, _serviceById); } catch (e) { console.error('[service-store]', e); }
+  }
+}
+
+const gaServiceStore = {
+  applySnapshot(services) {
+    for (const k of Object.keys(_serviceById)) delete _serviceById[k];
+    for (const s of services || []) {
+      if (s && s.id) _serviceById[s.id] = s;
+    }
+    _serviceNotify();
+  },
+  applyChanged(service) {
+    if (service && service.id) _serviceById[service.id] = service;
+    _serviceNotify();
+  },
+  onServices(cb) {
+    _serviceListeners.add(cb);
+    cb(_serviceList(), _serviceById);
+    return () => _serviceListeners.delete(cb);
+  },
+  list: _serviceList,
+  get: (id) => _serviceById[id],
+};
+
+/* ═══════════════ Bridge 适配（HTTP 命令 + WS 状态） ═══════════════ */
+(function initGaBridge() {
+  const listeners = new Map();
+  let ws = null;
+  let cachedBridgeReady = null;
+  const bridgeBase = `${location.protocol}//${location.hostname}:14168`;
+  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:14168/ws`;
+
+  function on(channel, cb) {
+    if (typeof cb !== 'function') return () => {};
+    if (!listeners.has(channel)) listeners.set(channel, new Set());
+    listeners.get(channel).add(cb);
+    if (channel === 'bridge-ready' && cachedBridgeReady) {
+      try { cb(cachedBridgeReady); } catch (err) { console.error('[ga bridge] replay bridge-ready', err); }
+    }
+    return () => listeners.get(channel)?.delete(cb);
+  }
+
+  function emit(channel, payload) {
+    if (channel === 'bridge-ready') cachedBridgeReady = payload;
+    const set = listeners.get(channel);
+    if (!set) return;
+    for (const cb of Array.from(set)) {
+      try { cb(payload); } catch (err) { console.error('[ga bridge]', channel, err); }
+    }
+  }
+
+  function handleServiceWs(msg) {
+    if (msg.type === 'services.snapshot') gaServiceStore.applySnapshot(msg.services);
+    else if (msg.type === 'service.changed') gaServiceStore.applyChanged(msg.service);
+    emit('service-state', msg);
+  }
+
+  async function http(path, options = {}) {
+    const headers = Object.assign({}, options.headers || {});
+    const init = Object.assign({}, options, { headers });
+    if (init.body && typeof init.body !== 'string') {
+      headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+      init.body = JSON.stringify(init.body);
+    }
+    const res = await fetch(`${bridgeBase}${path}`, init);
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+    if (!res.ok) {
+      const err = new Error((data && (data.error || data.message)) || `${res.status} ${res.statusText}`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
+
+  function connectWs() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.addEventListener('open', () => emit('bridge-log', 'WS connected'));
+      ws.addEventListener('message', (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch (_) { return; }
+        if (msg.type === 'bridge-ready') emit('bridge-ready', msg);
+        else if (msg.type === 'services.snapshot' || msg.type === 'service.changed') handleServiceWs(msg);
+        else if (msg.type === 'session-state') emit('bridge-notification', msg);
+        else if (msg.type === 'bridge-log') emit('bridge-log', msg.payload || msg);
+        else if (msg.type === 'bridge-error') emit('bridge-error', msg.payload || msg);
+      });
+      ws.addEventListener('close', () => emit('bridge-closed', { reason: 'ws-closed' }));
+      ws.addEventListener('error', () => emit('bridge-error', { type: 'ws-error', message: 'WebSocket error' }));
+    } catch (err) {
+      emit('bridge-error', { type: 'ws-error', message: err.message || String(err) });
+    }
+  }
+
+  async function rpc(method, params = {}) {
+    switch (method) {
+      case 'app/status': return http('/status');
+      case 'app/config/get': return http('/config');
+      case 'app/config/save': return http('/config', { method: 'POST', body: params || {} });
+      case 'get/model-profiles': return http('/model-profiles');
+      case 'session/new': return http('/session/new', { method: 'POST', body: params || {} });
+      case 'session/prompt': {
+        const sid = params.sessionId || params.id || params.bridgeSessionId;
+        if (!sid) throw new Error('session/prompt missing sessionId');
+        return http(`/session/${encodeURIComponent(sid)}/prompt`, { method: 'POST', body: params || {} });
+      }
+      case 'session/poll': {
+        const sid = params.sessionId || params.id || params.bridgeSessionId;
+        if (!sid) throw new Error('session/poll missing sessionId');
+        const after = params.afterId ?? params.after ?? 0;
+        const limit = params.limit ?? 200;
+        return http(`/session/${encodeURIComponent(sid)}/messages?after=${encodeURIComponent(after)}&limit=${encodeURIComponent(limit)}`);
+      }
+      case 'session/cancel': {
+        const sid = params.sessionId || params.id || params.bridgeSessionId;
+        if (!sid) throw new Error('session/cancel missing sessionId');
+        return http(`/session/${encodeURIComponent(sid)}/cancel`, { method: 'POST', body: params || {} });
+      }
+      case 'app/path/open': return http('/path/open', { method: 'POST', body: params || {} });
+      case 'services/start': {
+        const id = params.id;
+        if (!id) throw new Error('services/start missing id');
+        return http('/services/start', { method: 'POST', body: { id } });
+      }
+      case 'services/stop': {
+        const id = params.id;
+        if (!id) throw new Error('services/stop missing id');
+        return http('/services/stop', { method: 'POST', body: { id } });
+      }
+      case 'services/logs': {
+        const id = params.id;
+        if (!id) throw new Error('services/logs missing id');
+        const tail = params.tail ?? 200;
+        return http(`/services/logs?id=${encodeURIComponent(id)}&tail=${encodeURIComponent(tail)}`);
+      }
+      case 'services/panel': return http('/services/panel');
+      case 'services/mykey/get': return http('/services/mykey');
+      case 'services/mykey/save': return http('/services/mykey', { method: 'POST', body: params || {} });
+      case 'app/path/selectGaRoot': return http('/config');
+      case 'list_continuable_sessions': return { sessions: [] };
+      case 'restore_session': throw new Error('restore_session is not implemented in web2 bridge');
+      default: throw new Error(`Unknown RPC method: ${method}`);
+    }
+  }
+
+  async function startService(id) {
+    try {
+      const res = await rpc('services/start', { id });
+      if (res.service) gaServiceStore.applyChanged(res.service);
+      return res;
+    } catch (e) {
+      if (e.data && e.data.service) gaServiceStore.applyChanged(e.data.service);
+      throw e;
+    }
+  }
+
+  async function stopService(id) {
+    const res = await rpc('services/stop', { id });
+    if (res.service) gaServiceStore.applyChanged(res.service);
+    return res;
+  }
+
+  window.ga = {
+    platform: navigator.platform.toLowerCase().includes('mac') ? 'darwin' : 'win32',
+    startBridge: async () => { connectWs(); return http('/status'); },
+    stopBridge: async () => ({ ok: true }),
+    checkStatus: () => rpc('app/status', {}),
+    getConfig: () => rpc('app/config/get', {}),
+    saveConfig: (cfg) => rpc('app/config/save', cfg || {}),
+    getModelProfiles: () => rpc('get/model-profiles', {}),
+    selectGaRoot: () => rpc('app/path/selectGaRoot', {}),
+    openMykeyTemplate: () => rpc('app/path/open', { kind: 'mykeyTemplate' }),
+    openMykey: () => rpc('app/path/open', { kind: 'mykey' }),
+    startService,
+    stopService,
+    getServiceLogs: (id, tail = 200) => rpc('services/logs', { id, tail }),
+    getServicePanel: () => rpc('services/panel', {}),
+    getMykeyContent: () => rpc('services/mykey/get', {}),
+    saveMykeyContent: (content) => rpc('services/mykey/save', { content }),
+    pollSession: (sessionId, afterId = 0) => rpc('session/poll', { sessionId, afterId }),
+    rpc,
+    onBridgeMessage: (cb) => on('bridge-message', cb),
+    onBridgeNotification: (cb) => on('bridge-notification', cb),
+    onBridgeError: (cb) => on('bridge-error', cb),
+    onBridgeClosed: (cb) => on('bridge-closed', cb),
+    onBridgeReady: (cb) => on('bridge-ready', cb),
+    onBridgeLog: (cb) => on('bridge-log', cb),
+    onServiceState: (cb) => on('service-state', cb),
+    onOpenSearch: (cb) => on('open-search', cb),
+  };
+
+  connectWs();
+  http('/status').then(status => emit('bridge-ready', status))
+    .catch(err => emit('bridge-error', { type: 'http-error', message: err.message || String(err) }));
+})();
 
 /* ═══════════════ i18n ═══════════════ */
 const I18N = {
@@ -22,8 +233,7 @@ const I18N = {
     'composer.placeholder': '输入消息… (Enter 发送, Shift+Enter 换行)',
     'search.placeholder': '搜索会话…', 'conv.new': '新对话',
     'ctx.pin': '置顶', 'ctx.unpin': '取消置顶', 'ctx.del': '删除',
-    'common.close': '关闭', 'common.more': '更多', 'common.optional': '选填',
-    'common.save': '保存',
+    'common.close': '关闭', 'common.more': '更多', 'common.optional': '选填', 'common.save': '保存',
     'modal.preset': '预设功能', 'modal.addModel': '添加模型', 'modal.editModel': '编辑模型', 'modal.settings': '配置',
     'modal.customPreset': '自定义预设',
     'customPreset.titlePh': '标题，例如「写周报」',
@@ -46,7 +256,7 @@ const I18N = {
     'err.modelSave': '保存失败', 'err.modelRequired': '请填写模型、API Key 和 API 地址',
     'err.modelDelete': '删除失败', 'err.modelDeleteLast': '至少保留一个模型',
     'confirm.modelDelete': '确定删除该模型配置？',
-    'page.channels.title': '消息通道', 'page.channels.sub': '把 hub.pyw 管理的各 imbot 接入搬进来：每行一个渠道',
+    'page.channels.title': '消息通道', 'page.channels.sub': '后台 IM 进程：列表、启停与日志（同 hub.pyw）',
     'page.status.title': '状态面板', 'page.status.sub': 'hub.pyw 管理的后台进程/服务，集中查看与启停',
     'page.collab.title': '协作动态', 'page.collab.sub': 'subagent / Hive worker 的实时状态与产出',
     'page.token.title': 'Token 统计', 'page.token.sub': '每会话与累计的 token 用量及估算成本',
@@ -70,6 +280,16 @@ const I18N = {
     'chip.plan': 'Plan',
     'chip.auto': 'Auto',
     'ch.wechat': '微信', 'ch.wecom': '企业微信', 'ch.lark': '飞书', 'ch.dingtalk': '钉钉',
+    'ch.qq': 'QQ', 'ch.telegram': 'Telegram', 'ch.discord': 'Discord',
+    'ch.loading': '加载中…', 'ch.empty': '未发现 IM 进程脚本',
+    'ch.logEmpty': '暂无日志',
+    'err.channelLoad': '加载失败', 'err.channelStart': '启动失败', 'err.channelStop': '停止失败',
+    'err.channelNotConfigured': '请先在 mykey.py 中配置该平台',
+    'sys.channelStarted': '已启动', 'sys.channelStopped': '已停止',
+    'modal.channelLogs': '进程日志',
+    'modal.mykeyConfig': 'mykey.py 配置',
+    'sys.configSaved': '配置已保存',
+    'st.starting': '启动中…', 'st.stopping': '停止中…',
     'st.online': '在线', 'st.offline': '离线', 'st.error': '错误', 'st.running': '运行', 'st.abnormal': '异常',
     'act.configure': '配置', 'act.logs': '日志', 'act.restart': '重启', 'act.stop': '停止', 'act.start': '启动',
     'proc.imbotWechat': 'imbot · 微信', 'proc.imbotDing': 'imbot · 钉钉', 'proc.scheduler': '定时任务调度',
@@ -102,8 +322,7 @@ const I18N = {
     'composer.placeholder': 'Type a message… (Enter to send, Shift+Enter for newline)',
     'search.placeholder': 'Search chats…', 'conv.new': 'New chat',
     'ctx.pin': 'Pin', 'ctx.unpin': 'Unpin', 'ctx.del': 'Delete',
-    'common.close': 'Close', 'common.more': 'More', 'common.optional': 'Optional',
-    'common.save': 'Save',
+    'common.close': 'Close', 'common.more': 'More', 'common.optional': 'Optional', 'common.save': 'Save',
     'modal.preset': 'Presets', 'modal.addModel': 'Add model', 'modal.editModel': 'Edit model', 'modal.settings': 'Settings',
     'modal.customPreset': 'Custom preset',
     'customPreset.titlePh': 'Title, e.g. "Weekly report"',
@@ -126,7 +345,7 @@ const I18N = {
     'err.modelSave': 'Save failed', 'err.modelRequired': 'Model, API Key and base URL are required',
     'err.modelDelete': 'Delete failed', 'err.modelDeleteLast': 'At least one model is required',
     'confirm.modelDelete': 'Delete this model profile?',
-    'page.channels.title': 'Channels', 'page.channels.sub': 'imbot channels managed by hub.pyw — one row per channel',
+    'page.channels.title': 'Channels', 'page.channels.sub': 'Background IM processes: list, start/stop, logs (hub.pyw style)',
     'page.status.title': 'Status', 'page.status.sub': 'Background processes/services managed by hub.pyw',
     'page.collab.title': 'Collaboration', 'page.collab.sub': 'Live state & output of subagents / Hive workers',
     'page.token.title': 'Token usage', 'page.token.sub': 'Per-session and total token usage & estimated cost',
@@ -150,6 +369,16 @@ const I18N = {
     'chip.plan': 'Plan',
     'chip.auto': 'Auto',
     'ch.wechat': 'WeChat', 'ch.wecom': 'WeCom', 'ch.lark': 'Lark', 'ch.dingtalk': 'DingTalk',
+    'ch.qq': 'QQ', 'ch.telegram': 'Telegram', 'ch.discord': 'Discord',
+    'ch.loading': 'Loading…', 'ch.empty': 'No IM process scripts found',
+    'ch.logEmpty': 'No log output yet',
+    'err.channelLoad': 'Failed to load', 'err.channelStart': 'Start failed', 'err.channelStop': 'Stop failed',
+    'err.channelNotConfigured': 'Configure this platform in mykey.py first',
+    'sys.channelStarted': 'Started', 'sys.channelStopped': 'Stopped',
+    'modal.channelLogs': 'Process logs',
+    'modal.mykeyConfig': 'mykey.py',
+    'sys.configSaved': 'Configuration saved',
+    'st.starting': 'Starting…', 'st.stopping': 'Stopping…',
     'st.online': 'Online', 'st.offline': 'Offline', 'st.error': 'Error', 'st.running': 'Running', 'st.abnormal': 'Error',
     'act.configure': 'Configure', 'act.logs': 'Logs', 'act.restart': 'Restart', 'act.stop': 'Stop', 'act.start': 'Start',
     'proc.imbotWechat': 'imbot · WeChat', 'proc.imbotDing': 'imbot · DingTalk', 'proc.scheduler': 'Scheduler',
@@ -170,7 +399,7 @@ const I18N = {
 const LANGS = ['zh', 'en'];
 let lang = LANGS.includes(localStorage.getItem('ga_lang')) ? localStorage.getItem('ga_lang') : 'zh';
 let theme = localStorage.getItem('ga_theme') || '1';
-const STORE = { lang: 'ga_lang', theme: 'ga_theme', appearance: 'ga_appearance', plain: 'ga_plain', llmNo: 'ga_llm_no' };
+const STORE = { lang: 'ga_lang', theme: 'ga_theme', appearance: 'ga_appearance', plain: 'ga_plain', llmNo: 'ga_llm_no', sessions: 'ga_sessions', activeId: 'ga_active_id' };
 const APPEARANCE_IDS = ['light', 'dark'];
 const LEGACY_STYLE = { classic: ['light', true], tinted: ['light', false], dark: ['dark', false] };
 
@@ -245,6 +474,8 @@ function selectLang(code) {
   refreshStatusLabel();
   updateModelChip();
   renderSettingsModels();
+  if (document.querySelector('.page[data-page="channels"].active')) renderChannelList(gaServiceStore.list());
+  if (document.querySelector('.page[data-page="status"].active')) loadStatusPanel();
 }
 function applyTheme(id) {
   const n = parseInt(id, 10);
@@ -385,6 +616,32 @@ function rt(sess) {
 const activeSess = () => state.sessions.get(state.activeId) || null;
 const isActive = (sess) => sess && sess.id === state.activeId;
 
+function saveSessions() {
+  try {
+    const arr = [...state.sessions.values()].map(s => ({
+      id: s.id, bridgeSessionId: s.bridgeSessionId, title: s.title,
+      untitled: s.untitled, pinned: s.pinned,
+      lastActiveTs: s.lastActiveTs
+    }));
+    localStorage.setItem(STORE.sessions, JSON.stringify(arr));
+    if (state.activeId) localStorage.setItem(STORE.activeId, state.activeId);
+  } catch (_) {}
+}
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORE.sessions);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    for (const s of arr) {
+      s.messages = s.messages || [];
+      state.sessions.set(s.id, s);
+    }
+    const savedActive = localStorage.getItem(STORE.activeId);
+    if (savedActive && state.sessions.has(savedActive)) state.activeId = savedActive;
+    else if (state.sessions.size) state.activeId = state.sessions.keys().next().value;
+  } catch (_) {}
+}
+
 /* ═══════════════ DOM refs ═══════════════ */
 const chatPage   = document.querySelector('.page[data-page="chat"]');
 const msgArea    = chatPage.querySelector('.msg-area');
@@ -515,7 +772,12 @@ function isUntitled(x) { return !x || /^(new chat|新对话|新会话)$/i.test(S
 function renderSessionList() {
   convListEl.innerHTML = '';
   const query = (searchInput ? searchInput.value : '').trim().toLowerCase();
-  const all = [...state.sessions.values()];
+  const all = [...state.sessions.values()]
+    .sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return (b.lastActiveTs || 0) - (a.lastActiveTs || 0);
+    });
   const filtered = query
     ? all.filter(s => {
         const title = (s.title || '').toLowerCase();
@@ -553,10 +815,11 @@ async function ensureBridgeSession(sess) {
 }
 async function newSession() {
   const localId = 'local-' + Date.now() + '-' + Math.random().toString(16).slice(2);
-  const sess = { id: localId, bridgeSessionId: null, title: t('conv.defaultTitle'), messages: [], untitled: true };
+  const sess = { id: localId, bridgeSessionId: null, title: t('conv.defaultTitle'), messages: [], untitled: true, lastActiveTs: Date.now() };
   state.sessions.set(localId, sess);
   try { await ensureBridgeSession(sess); } catch (e) { showError(t('err.newSession') + ': ' + (e.message || e)); }
   setActiveSession(localId);
+  saveSessions();
   renderSessionList();
 }
 function setActiveSession(id) {
@@ -568,6 +831,10 @@ function setActiveSession(id) {
   renderAllMessages(sess);
   setBusy(sess, rt(sess).busy);
   renderSessionList();
+  localStorage.setItem(STORE.activeId, id);
+  if (sess.bridgeSessionId && !sess.messages.length && state.bridgeReady) {
+    pollSession(sess);
+  }
 }
 async function closeSession(id) {
   const sess = state.sessions.get(id);
@@ -581,6 +848,7 @@ async function closeSession(id) {
     if (next) setActiveSession(next);
     else { state.activeId = null; if (msgsEl) msgsEl.innerHTML = ''; refreshEmptyState(null); refreshStatusLabel(); }
   }
+  saveSessions();
   renderSessionList();
 }
 
@@ -627,6 +895,7 @@ convMenu.addEventListener('click', (e) => {
       for (const [k, v] of state.sessions) if (k !== sess.id) m.set(k, v);
       state.sessions = m;
     }
+    saveSessions();
     renderSessionList();
   } else if (sess && act === 'del') {
     closeSession(sess.id);
@@ -645,6 +914,7 @@ function upsert(sess, raw, partial) {
   r.seen.add(m.id); r.lastId = Math.max(r.lastId, m.id);
   if (m.role === 'assistant' && r.draftEl) { r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
   sess.messages.push(m); appendMessage(sess, m);
+  saveSessions();
 }
 async function pollSession(sess) {
   const r = rt(sess);
@@ -668,6 +938,7 @@ async function pollSession(sess) {
             sess.messages.push(m);
             r.draftEl.remove(); r.draftEl = null; r.draftText = '';
             if (isActive(sess)) appendMessage(sess, m);
+            saveSessions();
           } else {
             r.draftEl.remove(); r.draftEl = null;
           }
@@ -680,6 +951,7 @@ async function pollSession(sess) {
     setBusy(sess, false);
   } finally {
     r.polling = false; renderSessionList();
+    tokPollBridge();
   }
 }
 
@@ -703,13 +975,24 @@ async function sendPrompt(text) {
   const previewImgs = usedFiles.filter(f => f.isImage && f.dataUrl).map(f => ({ id: 'f-' + f.sid, dataUrl: f.dataUrl }));
   if (previewImgs.length) userMsg.images = previewImgs;
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
+  sess.lastActiveTs = Date.now();
   if (sess.untitled || isUntitled(sess.title)) {
     sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
     sess.untitled = false; renderSessionList();
   }
+  saveSessions();
   setBusy(sess, true);
   try {
-    const sid = await ensureBridgeSession(sess);
+    let sid = await ensureBridgeSession(sess);
+    try {
+      await bridgeFetch(`/session/${encodeURIComponent(sid)}/restore`, { method: 'POST', body: {} });
+    } catch (restoreErr) {
+      if (/not found/i.test(restoreErr.message || '')) {
+        sess.bridgeSessionId = null;
+        sid = await ensureBridgeSession(sess);
+        saveSessions();
+      }
+    }
     const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, llmNo: state.llmNo });
     if (res?.error) throw new Error(res.error.message || res.error);
     state.pendingFiles = [];
@@ -1327,6 +1610,9 @@ window.ga.onBridgeReady(async () => {
   if (!state.activeId) { refreshStatusLabel(); refreshEmptyState(null); }
   await loadModelProfiles();
   await loadBridgeConfig();
+  if (document.querySelector('.page[data-page="channels"].active')) renderChannelList(gaServiceStore.list());
+  const sess = activeSess();
+  if (sess && sess.bridgeSessionId && !sess.messages.length) pollSession(sess);
 });
 window.ga.onBridgeNotification((msg) => {
   if (msg && msg.type === 'session-state') {
@@ -1375,6 +1661,23 @@ function estCost(inp, out, model, cacheRead, cacheCreate) {
 }
 function fmtTok(n) { return n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n); }
 function fmtTime(ts) { return new Date(ts*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+function modelPriceTip(model) {
+  if (!model) return '';
+  const m = model.toLowerCase().replace(/\[.*\]/,'');
+  const entry = MODEL_PRICES[m] || Object.entries(MODEL_PRICES).find(([k])=>m.includes(k))?.[1];
+  const known = !!entry;
+  const p = entry || [3,15];
+  const isClaudeOrDS = /claude|deepseek/i.test(m);
+  const cacheReadRate = isClaudeOrDS ? 0.1 : 0.5;
+  const cacheWriteRate = isClaudeOrDS ? 1.25 : 1.0;
+  const lines = [];
+  if (!known) lines.push(lang === 'zh' ? '⚠ 此模型计费规则尚未明确，按默认估算' : '⚠ Pricing not confirmed, using defaults');
+  lines.push((lang === 'zh' ? '输入: $' : 'Input: $') + p[0] + ' /M tokens');
+  lines.push((lang === 'zh' ? '输出: $' : 'Output: $') + p[1] + ' /M tokens');
+  lines.push((lang === 'zh' ? '缓存写入: $' : 'Cache write: $') + (p[0] * cacheWriteRate).toFixed(2) + ' /M tokens');
+  lines.push((lang === 'zh' ? '缓存读取: $' : 'Cache read: $') + (p[0] * cacheReadRate).toFixed(2) + ' /M tokens');
+  return lines.join('\n');
+}
 
 function tokLoadHistory() { try { return JSON.parse(localStorage.getItem(TOK_STORE_KEY)||'[]'); } catch(_) { return []; } }
 function tokSaveHistory(h) { localStorage.setItem(TOK_STORE_KEY, JSON.stringify(h)); }
@@ -1387,13 +1690,13 @@ async function tokPollBridge() {
   if (_tokPolling) return;
   _tokPolling = true;
   try {
-    const res = await bridgeFetch('/token-stats');
-    const data = await res.json();
+    const data = await bridgeFetch('/token-stats');
     const history = tokLoadHistory();
     for (const r of (data.records||[])) {
       const key = r.thread;
       const prev = _tokLastSnap[key] || {input:0,output:0,cacheCreate:0,cacheRead:0};
-      const di = r.input-prev.input, do_ = r.output-prev.output, dc = r.cacheCreate-prev.cacheCreate, dr = r.cacheRead-prev.cacheRead;
+      let di = r.input-prev.input, do_ = r.output-prev.output, dc = r.cacheCreate-prev.cacheCreate, dr = r.cacheRead-prev.cacheRead;
+      if (di<0||do_<0||dc<0||dr<0) { di = r.input; do_ = r.output; dc = r.cacheCreate; dr = r.cacheRead; }
       if (di>0||do_>0||dc>0||dr>0) {
         const sid = key.replace('GA-','');
         const sess = [...state.sessions.values()].find(s=>s.bridgeSessionId===sid);
@@ -1453,7 +1756,8 @@ function tokRenderTable(records) {
     const details=[]; s.prompts.sort((a,b)=>b.ts-a.ts);
     for(const p of s.prompts){
       const dr=document.createElement('tr'); dr.className='tok-detail'; dr.hidden=true;
-      dr.innerHTML=`<td>${fmtTime(p.ts)}${p.model?' · '+escapeHtml(p.model):''}</td><td>${fmtTok(p.input||0)}</td><td>${fmtTok(p.output||0)}</td><td>${fmtTok(p.cacheCreate||0)}</td><td>${fmtTok(p.cacheRead||0)}</td><td>¥${estCost(p.input||0,p.output||0,p.model,p.cacheRead||0,p.cacheCreate||0)}</td>`;
+      const modelHtml = p.model ? ` · <span class="tok-model-tip" data-tip="${escapeHtml(modelPriceTip(p.model))}">${escapeHtml(p.model)}</span>` : '';
+      dr.innerHTML=`<td>${fmtTime(p.ts)}${modelHtml}</td><td>${fmtTok(p.input||0)}</td><td>${fmtTok(p.output||0)}</td><td>${fmtTok(p.cacheCreate||0)}</td><td>${fmtTok(p.cacheRead||0)}</td><td>¥${estCost(p.input||0,p.output||0,p.model,p.cacheRead||0,p.cacheCreate||0)}</td>`;
       tokTbody.appendChild(dr); details.push(dr);
     }
     tr.addEventListener('click',()=>{const o=tr.classList.toggle('open');details.forEach(d=>d.hidden=!o);});
@@ -1466,7 +1770,7 @@ if(tokSince)tokSince.addEventListener('change',()=>{_tokPage=0;loadTokenPage();}
 if(tokUntil)tokUntil.addEventListener('change',()=>{_tokPage=0;loadTokenPage();});
 const tokResetBtn=document.getElementById('tok-reset');
 if(tokResetBtn)tokResetBtn.addEventListener('click',()=>{if(tokSince)tokSince.value='';if(tokUntil)tokUntil.value='';_tokPage=0;loadTokenPage();});
-nav.addEventListener('click',(e)=>{const item=e.target.closest('.nav-item');if(item&&item.dataset.page==='token')loadTokenPage();});
+nav.addEventListener('click',(e)=>{const item=e.target.closest('.nav-item');if(item&&item.dataset.page==='token')loadTokenPage();if(item&&item.dataset.page==='channels')renderChannelList(gaServiceStore.list());if(item&&item.dataset.page==='status')loadStatusPanel();});
 /* ═══════════════ 自定义预设 ═══════════════ */
 const CP_KEY = 'ga_custom_presets';
 const HB_KEY = 'ga_hidden_builtins';
@@ -1657,7 +1961,337 @@ if (msgArea) {
   });
 }
 
+/* ═══════════════ 消息通道（复用 gaServiceStore + WS 同步） ═══════════════ */
+const CHAN_ICON = '<svg class="lr-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const CHAN_FILE_LABELS = {
+  'qqapp.py': 'ch.qq',
+  'wechatapp.py': 'ch.wechat',
+  'wecomapp.py': 'ch.wecom',
+  'dingtalkapp.py': 'ch.dingtalk',
+  'tgapp.py': 'ch.telegram',
+  'dcapp.py': 'ch.discord',
+  'fsapp.py': 'ch.lark',
+};
+const chanListEl = document.getElementById('chan-list');
+const chanEmptyEl = document.getElementById('chan-empty');
+const chanLogModal = document.getElementById('chan-log-modal');
+const chanLogPre = document.getElementById('chan-log-pre');
+const chanLogTitle = document.getElementById('chan-log-title');
+const chanConfigModal = document.getElementById('chan-config-modal');
+const chanConfigTitle = document.getElementById('chan-config-title');
+const chanConfigEditor = document.getElementById('chan-config-editor');
+const chanConfigSave = document.getElementById('chan-config-save');
+let _chanLogId = null;
+let _chanBusy = false;
+let _chanToastTimer = null;
+
+function getToastRoot() {
+  let root = document.getElementById('toast-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'toast-root';
+    root.className = 'toast-root';
+    root.setAttribute('aria-live', 'polite');
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function showChanToast(title, detail, kind) {
+  if (!title) return;
+  const root = getToastRoot();
+  if (_chanToastTimer) clearTimeout(_chanToastTimer);
+  root.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = `toast toast-${kind === 'ok' ? 'ok' : 'err'}`;
+  const tEl = document.createElement('span');
+  tEl.className = 'toast-title';
+  tEl.textContent = title;
+  el.appendChild(tEl);
+  if (detail) {
+    const dEl = document.createElement('span');
+    dEl.className = 'toast-detail';
+    dEl.textContent = detail;
+    el.appendChild(dEl);
+  }
+  root.appendChild(el);
+  const show = () => el.classList.add('show');
+  requestAnimationFrame(show);
+  setTimeout(show, 16);
+  _chanToastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, 3000);
+}
+
+function channelDisplayName(ch) {
+  const file = (ch.name || ch.id || '').split('/').pop();
+  const key = CHAN_FILE_LABELS[file];
+  return key ? t(key) : (ch.name || ch.id || '');
+}
+function channelStatusClass(status) {
+  if (status === 'running') return 'on';
+  if (status === 'error') return 'err';
+  return 'off';
+}
+function channelStatusLabel(status) {
+  const map = {
+    running: 'st.running', offline: 'st.offline', error: 'st.error',
+    starting: 'st.starting', stopping: 'st.stopping',
+  };
+  return t(map[status] || 'st.offline');
+}
+function channelErrorMessage(code) {
+  const map = { not_configured: 'err.channelNotConfigured' };
+  return t(map[code] || code || 'err.channelStart');
+}
+function channelToastDetail(e) {
+  const svc = e.data && e.data.service;
+  if (svc && svc.lastError) return svc.lastError;
+  const code = e.data && e.data.error;
+  return channelErrorMessage(code || e.message);
+}
+function renderChannelList(channels) {
+  if (!chanListEl) return;
+  const rows = (channels || []).filter((ch) => (ch.id || '').startsWith('frontends/'));
+  chanListEl.innerHTML = '';
+  if (chanEmptyEl) chanEmptyEl.hidden = rows.length > 0;
+  for (const ch of rows) {
+    const row = document.createElement('div');
+    row.className = 'list-row';
+    row.dataset.channelId = ch.id;
+    const stClass = channelStatusClass(ch.status || 'offline');
+    const running = !!ch.running;
+    row.innerHTML = `
+      ${CHAN_ICON}
+      <div class="chan-meta">
+        <b class="chan-name"></b>
+        <span class="kv chan-path"></span>
+      </div>
+      <span class="lr-st ${stClass} chan-status"></span>
+      <span class="grow"></span>
+      <button type="button" class="link-btn link sm" data-act="configure"></button>
+      <button type="button" class="link-btn link sm" data-act="logs"></button>
+      <button type="button" class="sw-mini${running ? ' on' : ''}" data-act="toggle" aria-pressed="${running}"><i></i></button>`;
+    row.querySelector('.chan-name').textContent = channelDisplayName(ch);
+    row.querySelector('.chan-path').textContent = ch.name || ch.id;
+    row.querySelector('.chan-status').textContent = channelStatusLabel(ch.status || 'offline');
+    row.querySelector('[data-act="configure"]').textContent = t('act.configure');
+    row.querySelector('[data-act="logs"]').textContent = t('act.logs');
+    chanListEl.appendChild(row);
+  }
+}
+async function toggleChannel(id, running, toggleEl) {
+  if (_chanBusy) return;
+  _chanBusy = true;
+  if (toggleEl) toggleEl.disabled = true;
+  const label = channelDisplayName(gaServiceStore.get(id) || { id });
+  try {
+    if (running) {
+      await window.ga.stopService(id);
+      showChanToast(t('sys.channelStopped') + ' · ' + label, '', 'ok');
+    } else {
+      const res = await window.ga.startService(id);
+      if (res && res.service && res.service.status === 'error') {
+        throw Object.assign(new Error(res.service.lastError || 'start_failed'), { data: res });
+      }
+      showChanToast(t('sys.channelStarted') + ' · ' + label, '', 'ok');
+    }
+  } catch (e) {
+    showChanToast(
+      (running ? t('err.channelStop') : t('err.channelStart')) + ' · ' + label,
+      channelToastDetail(e),
+      'err'
+    );
+  } finally {
+    _chanBusy = false;
+    if (toggleEl) toggleEl.disabled = false;
+  }
+}
+async function openChannelLogs(id) {
+  if (!chanLogModal || !chanLogPre) return;
+  _chanLogId = id;
+  const ch = gaServiceStore.get(id) || { id };
+  const titleName = id === '__bridge__' ? (ch.name || 'bridge') : statusDisplayName(ch);
+  if (chanLogTitle) chanLogTitle.textContent = t('modal.channelLogs') + ' · ' + titleName;
+  chanLogPre.textContent = t('ch.loading');
+  openModal('chan-log-modal');
+  try {
+    const res = await window.ga.getServiceLogs(id, 200);
+    const lines = res.lines || [];
+    chanLogPre.textContent = lines.length ? lines.join('\n') : t('ch.logEmpty');
+  } catch (e) {
+    chanLogPre.textContent = t('err.channelLoad') + ': ' + (e.message || e);
+  }
+}
+async function openChannelMykey(channelId) {
+  if (!chanConfigModal || !chanConfigEditor) return;
+  const ch = gaServiceStore.get(channelId) || { id: channelId };
+  if (chanConfigTitle) {
+    chanConfigTitle.textContent = t('modal.mykeyConfig') + (channelId ? ' · ' + channelDisplayName(ch) : '');
+  }
+  chanConfigEditor.value = t('ch.loading');
+  chanConfigEditor.disabled = true;
+  if (chanConfigSave) chanConfigSave.disabled = true;
+  openModal('chan-config-modal');
+  try {
+    const res = await window.ga.getMykeyContent();
+    chanConfigEditor.value = res.content || '';
+  } catch (e) {
+    chanConfigEditor.value = t('err.channelLoad') + ': ' + (e.message || e);
+  } finally {
+    chanConfigEditor.disabled = false;
+    if (chanConfigSave) chanConfigSave.disabled = false;
+    chanConfigEditor.focus();
+  }
+}
+async function saveChannelMykey() {
+  if (!chanConfigEditor || !chanConfigSave) return;
+  chanConfigSave.disabled = true;
+  try {
+    await window.ga.saveMykeyContent(chanConfigEditor.value);
+    showChanToast(t('sys.configSaved'), '', 'ok');
+    chanConfigModal.hidden = true;
+  } catch (e) {
+    showChanToast(t('err.channelLoad'), e.message || String(e), 'err');
+  } finally {
+    chanConfigSave.disabled = false;
+  }
+}
+if (chanConfigSave) {
+  chanConfigSave.addEventListener('click', saveChannelMykey);
+}
+
+/* ═══════════════ 状态面板（复用 ServiceManager + 启停/日志） ═══════════════ */
+const statusListEl = document.getElementById('status-list');
+
+function statusDisplayName(s) {
+  if (!s) return '';
+  if (s.id === '__bridge__') return s.name || 'bridge';
+  if (s.id === 'reflect/scheduler.py') return t('proc.scheduler');
+  return channelDisplayName(s);
+}
+function fmtPid(pid) { return pid ? `PID ${pid}` : '—'; }
+function fmtRes(s) {
+  const cpu = s.cpuPct != null ? `${s.cpuPct}%` : '—';
+  const mem = s.memMb != null ? `${s.memMb}MB` : '—';
+  return `${cpu} / ${mem}`;
+}
+
+function renderStatusPanel(services) {
+  if (!statusListEl) return;
+  statusListEl.innerHTML = '';
+  for (const s of services || []) {
+    const row = document.createElement('div');
+    row.className = 'list-row';
+    row.dataset.serviceId = s.id;
+    const stClass = channelStatusClass(s.status || 'offline');
+    const running = !!s.running;
+    const managed = s.managed !== false;
+    let acts = `<button type="button" class="link-btn link sm" data-act="logs"></button>`;
+    if (managed) {
+      if (running) acts += `<button type="button" class="link-btn link sm" data-act="restart"></button>`;
+      acts += `<button type="button" class="sw-mini${running ? ' on' : ''}" data-act="toggle" aria-pressed="${running}"><i></i></button>`;
+    }
+    row.innerHTML = `
+      <b class="st-name"></b>
+      <span class="lr-st ${stClass} st-status"></span>
+      <span class="kv st-pid"></span>
+      <span class="kv st-res"></span>
+      <span class="grow"></span>
+      ${acts}`;
+    row.querySelector('.st-name').textContent = statusDisplayName(s);
+    row.querySelector('.st-status').textContent = channelStatusLabel(s.status || 'offline');
+    row.querySelector('.st-pid').textContent = fmtPid(s.pid);
+    row.querySelector('.st-res').textContent = fmtRes(s);
+    const logBtn = row.querySelector('[data-act="logs"]');
+    if (logBtn) logBtn.textContent = t('act.logs');
+    const rstBtn = row.querySelector('[data-act="restart"]');
+    if (rstBtn) rstBtn.textContent = t('act.restart');
+    statusListEl.appendChild(row);
+  }
+}
+
+async function loadStatusPanel() {
+  if (!statusListEl) return;
+  const res = await window.ga.getServicePanel();
+  renderStatusPanel(res.services || []);
+}
+
+async function restartService(id) {
+  const label = statusDisplayName(gaServiceStore.get(id) || { id });
+  await window.ga.stopService(id);
+  const res = await window.ga.startService(id);
+  if (res && res.service && res.service.status === 'error') {
+    throw Object.assign(new Error(res.service.lastError || 'start_failed'), { data: res });
+  }
+  showChanToast(t('act.restart') + ' · ' + label, '', 'ok');
+}
+
+if (statusListEl) {
+  statusListEl.addEventListener('click', async (e) => {
+    const row = e.target.closest('.list-row');
+    if (!row) return;
+    const id = row.dataset.serviceId;
+    const actEl = e.target.closest('[data-act]');
+    if (!actEl || !id) return;
+    const act = actEl.dataset.act;
+    if (act === 'logs') {
+      openChannelLogs(id);
+      return;
+    }
+    if (act === 'restart') {
+      if (_chanBusy) return;
+      _chanBusy = true;
+      try {
+        await restartService(id);
+        await loadStatusPanel();
+      } catch (err) {
+        showChanToast(t('act.restart') + ' · ' + statusDisplayName({ id }), err.message || String(err), 'err');
+      } finally {
+        _chanBusy = false;
+      }
+      return;
+    }
+    if (act === 'toggle') {
+      if (actEl.disabled || _chanBusy) return;
+      const running = actEl.classList.contains('on');
+      await toggleChannel(id, running, actEl);
+      if (document.querySelector('.page[data-page="status"].active')) loadStatusPanel();
+    }
+  });
+}
+
+gaServiceStore.onServices((list) => {
+  if (document.querySelector('.page[data-page="channels"].active')) renderChannelList(list);
+  if (document.querySelector('.page[data-page="status"].active')) loadStatusPanel();
+});
+if (chanListEl) {
+  chanListEl.addEventListener('click', async (e) => {
+    const row = e.target.closest('.list-row');
+    if (!row) return;
+    const id = row.dataset.channelId;
+    const actEl = e.target.closest('[data-act]');
+    if (!actEl || !id) return;
+    const act = actEl.dataset.act;
+    if (act === 'logs') {
+      openChannelLogs(id);
+      return;
+    }
+    if (act === 'configure') {
+      openChannelMykey(id);
+      return;
+    }
+    if (act === 'toggle') {
+      if (actEl.disabled || _chanBusy) return;
+      const running = actEl.classList.contains('on');
+      await toggleChannel(id, running, actEl);
+    }
+  });
+}
+
 /* ═══════════════ 启动 ═══════════════ */
+loadSessions();
 applyAppearance(appearance, plainUi);
 applyTheme(theme);
 state.planMode = localStorage.getItem('ga_plan') === '1';
@@ -1673,6 +2307,7 @@ renderSessionList();
 loadCustomPresets();
 loadHiddenBuiltins();
 renderAllPresets();
-refreshEmptyState(null);
+if (state.activeId) setActiveSession(state.activeId);
+else refreshEmptyState(null);
 runLabel.textContent = t('status.connecting');
 window.ga.startBridge && window.ga.startBridge();
