@@ -57,11 +57,12 @@ const I18N = {
     'sys.stopRequested': '已请求停止',
     'slash.help': '可用命令：\n/new 新会话  /clear 清屏  /stop 停止  /settings 设置',
     'slash.unknown': '未知命令',
-    'upload.hint': '图片上传：粘贴图片到输入框即可（多模态接入中）',
-    'upload.button': '上传图片',
-    'upload.tooLarge': '图片过大或格式不支持',
+    'upload.hint': '上传文件：选择 / 拖拽 / 粘贴',
+    'upload.button': '上传文件',
+    'upload.tooLarge': '文件过大或数量超限',
+    'upload.failed': '上传失败',
     'upload.removeTitle': '移除',
-    'upload.dropHint': '松开以上传图片',
+    'upload.dropHint': '松开以上传文件',
     'lightbox.closeTitle': '关闭',
     'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running',
     'model.auto': '自动选择',
@@ -136,11 +137,12 @@ const I18N = {
     'sys.stopRequested': 'Stop requested',
     'slash.help': 'Commands:\n/new new chat  /clear clear  /stop stop  /settings settings',
     'slash.unknown': 'Unknown command',
-    'upload.hint': 'Image upload: paste an image into the input box (multimodal WIP)',
-    'upload.button': 'Upload image',
-    'upload.tooLarge': 'Image too large or unsupported',
+    'upload.hint': 'Upload file: pick / drag / paste',
+    'upload.button': 'Upload file',
+    'upload.tooLarge': 'File too large or limit reached',
+    'upload.failed': 'Upload failed',
     'upload.removeTitle': 'Remove',
-    'upload.dropHint': 'Drop to upload images',
+    'upload.dropHint': 'Drop to upload files',
     'lightbox.closeTitle': 'Close',
     'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running',
     'model.auto': 'Auto',
@@ -372,7 +374,8 @@ const state = {
   llmNo: 0, modelProfiles: [], modelName: null,
   runtime: new Map(),
   planMode: false, autoMode: false,
-  pendingImages: [],
+  pendingFiles: [],
+  fileSeq: 0,
 };
 function rt(sess) {
   let r = state.runtime.get(sess.id);
@@ -683,20 +686,22 @@ async function pollSession(sess) {
 /* ═══════════════ 发送 / 取消 ═══════════════ */
 async function sendPrompt(text) {
   text = String(text || '').trim();
-  if (!text && state.pendingImages.length === 0) return;
+  if (!text) return;
   if (!state.bridgeReady) { showError(t('err.bridge')); return; }
   if (!state.activeId) { await newSession(); if (!state.activeId) return; }
   const sess = activeSess(); const r = rt(sess);
   if (r.busy) return;
   const planPrefix = state.planMode ? t('presetPrompt.planMode') : '';
   const autoPrefix = state.autoMode ? t('presetPrompt.autoMode') : '';
-  const composedPrompt = [planPrefix, autoPrefix, text]
+  const expandedText = expandFilePlaceholders(text);
+  const composedPrompt = [planPrefix, autoPrefix, expandedText]
     .map(s => (s || '').trim())
     .filter(Boolean)
     .join('\n\n');
-  const images = state.pendingImages;
+  const usedFiles = collectUsedFiles(text);
   const userMsg = { role: 'user', content: text };
-  if (images.length) userMsg.images = images.map(im => ({ id: im.id, dataUrl: im.dataUrl }));
+  const previewImgs = usedFiles.filter(f => f.isImage && f.dataUrl).map(f => ({ id: 'f-' + f.sid, dataUrl: f.dataUrl }));
+  if (previewImgs.length) userMsg.images = previewImgs;
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
   if (sess.untitled || isUntitled(sess.title)) {
     sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
@@ -705,9 +710,9 @@ async function sendPrompt(text) {
   setBusy(sess, true);
   try {
     const sid = await ensureBridgeSession(sess);
-    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, images, llmNo: state.llmNo });
+    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, llmNo: state.llmNo });
     if (res?.error) throw new Error(res.error.message || res.error);
-    state.pendingImages = [];
+    state.pendingFiles = [];
     renderThumbStrip();
     const uid = Number(res.userMessageId || res.result?.userMessageId || 0);
     if (uid) { r.seen.add(uid); r.lastId = Math.max(r.lastId, uid); }
@@ -731,7 +736,7 @@ async function cancelPrompt() {
 /* ═══════════════ 输入区 / slash / 预设 ═══════════════ */
 function submitInput() {
   const text = inputEl.value;
-  if (!text.trim() && state.pendingImages.length === 0) return;
+  if (!text.trim()) return;
   inputEl.value = ''; inputEl.style.height = 'auto';
   if (text.trim().startsWith('/')) { handleSlash(text.trim()); return; }
   sendPrompt(text);
@@ -1084,58 +1089,130 @@ if (autoChip) autoChip.addEventListener('click', (e) => {
   applyToggleClass();
 });
 
-/* ═══════════════ image upload ═══════════════ */
-const MAX_IMG_FILES = 10;
-const MAX_IMG_BYTES = 10 * 1024 * 1024; // 10 MB
+/* ═══════════════ 文件上传（图片+任意文件，tuiapp_v2 模式） ═══════════════ */
+const MAX_UPLOAD_FILES = 10;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+const IMG_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const imgInput = document.getElementById('img-input');
 const thumbStrip = document.getElementById('thumb-strip');
 const uploadBtn = document.getElementById('upload-btn');
 const chatPanel = document.querySelector('main.main');
 
+function isImageFile(f) {
+  return (f && (f.type || '').startsWith('image/')) || IMG_EXT_RE.test(f?.name || '');
+}
+
+function placeholderFor(file) {
+  return file.isImage ? `[Image #${file.sid}]` : `[File #${file.sid}]`;
+}
+
 function renderThumbStrip() {
   if (!thumbStrip) return;
-  if (state.pendingImages.length === 0) {
+  if (state.pendingFiles.length === 0) {
     thumbStrip.innerHTML = '';
     thumbStrip.hidden = true;
     return;
   }
-  thumbStrip.innerHTML = state.pendingImages.map(img =>
-    `<div class="thumb"><img src="${img.dataUrl}"><button class="x" data-id="${img.id}" data-i18n-title="upload.removeTitle" title="">×</button></div>`
-  ).join('');
+  thumbStrip.innerHTML = state.pendingFiles.map(f => {
+    if (f.isImage && f.dataUrl) {
+      return `<div class="thumb" data-sid="${f.sid}"><img src="${f.dataUrl}"><button class="x" data-sid="${f.sid}" data-i18n-title="upload.removeTitle" title="">×</button></div>`;
+    }
+    const label = (f.name || 'file').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+    return `<div class="file-chip" data-sid="${f.sid}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="fc-name">${label}</span><button class="x" data-sid="${f.sid}" data-i18n-title="upload.removeTitle" title="">×</button></div>`;
+  }).join('');
   thumbStrip.hidden = false;
   applyI18n();
 }
 
-function addImageFiles(fileList) {
+function insertPlaceholderInComposer(marker) {
+  if (!inputEl) return;
+  const start = inputEl.selectionStart ?? inputEl.value.length;
+  const end = inputEl.selectionEnd ?? inputEl.value.length;
+  const before = inputEl.value.slice(0, start);
+  const after = inputEl.value.slice(end);
+  const needSpace = before && !/\s$/.test(before);
+  const insertion = (needSpace ? ' ' : '') + marker + ' ';
+  inputEl.value = before + insertion + after;
+  const caret = (before + insertion).length;
+  inputEl.setSelectionRange(caret, caret);
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  inputEl.focus();
+}
+
+function removePlaceholderFromComposer(file) {
+  if (!inputEl) return;
+  const marker = placeholderFor(file);
+  const re = new RegExp('\\s?' + marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s?', '');
+  inputEl.value = inputEl.value.replace(re, ' ').replace(/  +/g, ' ').trim();
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function expandFilePlaceholders(text) {
+  return text.replace(/\[(Image|File) #(\d+)\]/g, (m, kind, n) => {
+    const f = state.pendingFiles.find(x => x.sid === Number(n));
+    return (f && f.path) ? f.path : m;
+  });
+}
+
+function collectUsedFiles(text) {
+  const used = [];
+  text.replace(/\[(Image|File) #(\d+)\]/g, (m, kind, n) => {
+    const f = state.pendingFiles.find(x => x.sid === Number(n));
+    if (f) used.push(f);
+    return m;
+  });
+  return used;
+}
+
+async function uploadOne(name, dataUrl) {
+  const res = await fetch(`http://${location.hostname}:14168/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, dataUrl }),
+  });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'upload failed');
+  return j.path;
+}
+
+async function addFiles(fileList) {
   const files = Array.from(fileList || []);
   if (files.length === 0) return;
   let skipped = false;
   const accepted = [];
   for (const f of files) {
-    if (!f.type.startsWith('image/') || f.size > MAX_IMG_BYTES) { skipped = true; continue; }
-    if (state.pendingImages.length + accepted.length >= MAX_IMG_FILES) { skipped = true; break; }
+    if (f.size > MAX_UPLOAD_BYTES) { skipped = true; continue; }
+    if (state.pendingFiles.length + accepted.length >= MAX_UPLOAD_FILES) { skipped = true; break; }
     accepted.push(f);
   }
-  let pending = accepted.length;
-  if (pending === 0) {
+  if (accepted.length === 0) {
     if (skipped) showSystem(t('upload.tooLarge'));
     return;
   }
   for (const f of accepted) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const id = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-      state.pendingImages.push({ id, dataUrl: String(reader.result || '') });
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || ''));
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(f);
+      });
+      const path = await uploadOne(f.name || 'file', dataUrl);
+      state.fileSeq += 1;
+      const sid = state.fileSeq;
+      const isImage = isImageFile(f);
+      const entry = {
+        sid, name: f.name || 'file', isImage, path,
+        dataUrl: isImage ? dataUrl : '',
+      };
+      state.pendingFiles.push(entry);
+      insertPlaceholderInComposer(placeholderFor(entry));
       renderThumbStrip();
-      pending -= 1;
-      if (pending === 0 && skipped) showSystem(t('upload.tooLarge'));
-    };
-    reader.onerror = () => {
-      pending -= 1;
-      if (pending === 0 && skipped) showSystem(t('upload.tooLarge'));
-    };
-    reader.readAsDataURL(f);
+    } catch (e) {
+      showSystem(t('upload.failed') + ': ' + (e.message || e));
+    }
   }
+  if (skipped) showSystem(t('upload.tooLarge'));
 }
 
 if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
@@ -1144,18 +1221,27 @@ if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
 });
 
 if (imgInput) imgInput.addEventListener('change', () => {
-  addImageFiles(imgInput.files);
+  addFiles(imgInput.files);
   imgInput.value = '';
 });
 
 if (thumbStrip) thumbStrip.addEventListener('click', (e) => {
   const x = e.target.closest('.x');
   if (x) {
-    const id = x.dataset.id;
-    const idx = state.pendingImages.findIndex(img => img.id === id);
+    const sid = Number(x.dataset.sid);
+    const idx = state.pendingFiles.findIndex(f => f.sid === sid);
     if (idx >= 0) {
-      state.pendingImages.splice(idx, 1);
+      const removed = state.pendingFiles[idx];
+      state.pendingFiles.splice(idx, 1);
+      removePlaceholderFromComposer(removed);
       renderThumbStrip();
+      if (removed.path) {
+        fetch(`http://${location.hostname}:14168/upload`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: removed.path }),
+        }).catch(() => {});
+      }
     }
     return;
   }
@@ -1199,11 +1285,11 @@ if (chatPanel) {
     e.preventDefault();
     dragDepth = 0;
     chatPanel.classList.remove('dragover');
-    addImageFiles(e.dataTransfer.files);
+    addFiles(e.dataTransfer.files);
   });
 }
 
-/* ─── paste image into composer ─── */
+/* ─── paste file/image into composer ─── */
 if (inputEl) {
   inputEl.addEventListener('paste', (e) => {
     const items = e.clipboardData && e.clipboardData.items;
@@ -1217,7 +1303,7 @@ if (inputEl) {
     }
     if (files.length === 0) return;
     e.preventDefault();
-    addImageFiles(files);
+    addFiles(files);
   });
 }
 
