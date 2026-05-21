@@ -1083,7 +1083,7 @@ document.querySelectorAll('.feature-grid').forEach(grid => {
 
 /* ═══════════════ 模型 / 设置 ═══════════════ */
 function updateModelChip() {
-  if (modelNameEl) modelNameEl.textContent = state.modelName || t('model.auto');
+  if (modelNameEl) modelNameEl.textContent = state.modelName || '';
 }
 async function selectModel(id, name) {
   state.llmNo = id;
@@ -1236,11 +1236,9 @@ function renderModelMenu() {
   if (!modelMenu) return;
   const list = state.modelProfiles || [];
   const rows = [];
-  const autoActive = (state.llmNo === 0) ? ' active' : '';
-  rows.push(`<div class="ga-menu-item${autoActive}" data-llmno="0"><span data-i18n="model.auto"></span></div>`);
   list.forEach((p, i) => {
-    const no = (i + 1);
-    const isActive = (state.llmNo === (p.id ?? no)) ? ' active' : '';
+    const no = (p.id ?? i);
+    const isActive = (state.llmNo === no) ? ' active' : '';
     const label = escapeHtml(p.name || '');
     rows.push(`<div class="ga-menu-item${isActive}" data-llmno="${no}">${label}</div>`);
   });
@@ -1265,15 +1263,10 @@ if (modelMenu) modelMenu.addEventListener('click', (e) => {
   e.stopPropagation();
   const item = e.target.closest('.ga-menu-item');
   if (!item) return;
-  const no = parseInt(item.dataset.llmno, 10) || 0;
-  state.llmNo = no;
-  if (no === 0) {
-    state.modelName = '';
-  } else {
-    const p = (state.modelProfiles || [])[no - 1];
-    state.modelName = (p && p.name) || '';
-  }
-  updateModelChip();
+  const no = parseInt(item.dataset.llmno, 10);
+  if (Number.isNaN(no)) return;
+  const p = (state.modelProfiles || []).find(x => (x.id ?? 0) === no);
+  selectModel(no, (p && p.name) || '');
   closeModelMenu();
 });
 document.addEventListener('click', (e) => {
