@@ -23,7 +23,14 @@ const I18N = {
     'search.placeholder': '搜索会话…', 'conv.new': '新对话',
     'ctx.pin': '置顶', 'ctx.unpin': '取消置顶', 'ctx.del': '删除',
     'common.close': '关闭', 'common.more': '更多', 'common.optional': '选填',
+    'common.save': '保存',
     'modal.preset': '预设功能', 'modal.addModel': '添加模型', 'modal.editModel': '编辑模型', 'modal.settings': '配置',
+    'modal.customPreset': '自定义预设',
+    'customPreset.titlePh': '标题，例如「写周报」',
+    'customPreset.promptPh': 'Prompt 内容，发送时会作为消息提交',
+    'customPreset.empty': '标题和 Prompt 不能为空',
+    'customPreset.removeTitle': '删除',
+    'builtinPreset.restoreBtn': '恢复默认预设',
     'set.appearance': '外观', 'set.plainUi': '素色', 'set.theme': '颜色', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型',
     'appearance.light': '浅色', 'appearance.dark': '深色',
     'set.noModels': '暂无模型，点击下方添加',
@@ -55,6 +62,7 @@ const I18N = {
     'upload.tooLarge': '图片过大或格式不支持',
     'upload.removeTitle': '移除',
     'upload.dropHint': '松开以上传图片',
+    'lightbox.closeTitle': '关闭',
     'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running',
     'model.auto': '自动选择',
     'model.menuLabel': '选择模型',
@@ -94,7 +102,14 @@ const I18N = {
     'search.placeholder': 'Search chats…', 'conv.new': 'New chat',
     'ctx.pin': 'Pin', 'ctx.unpin': 'Unpin', 'ctx.del': 'Delete',
     'common.close': 'Close', 'common.more': 'More', 'common.optional': 'Optional',
+    'common.save': 'Save',
     'modal.preset': 'Presets', 'modal.addModel': 'Add model', 'modal.editModel': 'Edit model', 'modal.settings': 'Settings',
+    'modal.customPreset': 'Custom preset',
+    'customPreset.titlePh': 'Title, e.g. "Weekly report"',
+    'customPreset.promptPh': 'Prompt body — sent as the message when clicked',
+    'customPreset.empty': 'Title and Prompt cannot be empty',
+    'customPreset.removeTitle': 'Delete',
+    'builtinPreset.restoreBtn': 'Restore defaults',
     'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.theme': 'Color', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model',
     'appearance.light': 'Light', 'appearance.dark': 'Dark',
     'set.noModels': 'No models yet — add one below',
@@ -126,6 +141,7 @@ const I18N = {
     'upload.tooLarge': 'Image too large or unsupported',
     'upload.removeTitle': 'Remove',
     'upload.dropHint': 'Drop to upload images',
+    'lightbox.closeTitle': 'Close',
     'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running',
     'model.auto': 'Auto',
     'model.menuLabel': 'Select model',
@@ -434,7 +450,12 @@ function refreshEmptyState(sess) {
 function msgNode(msg) {
   const el = document.createElement('div');
   el.className = 'msg ' + (msg.role || 'system');
-  if (msg.role === 'user') el.innerHTML = `<div class="bubble">${escapeHtml(msg.content)}</div>`;
+  if (msg.role === 'user') {
+    const imgsHtml = (msg.images && msg.images.length)
+      ? `<div class="bubble-imgs">${msg.images.map(im => `<img src="${im.dataUrl}" alt="">`).join('')}</div>`
+      : '';
+    el.innerHTML = `<div class="bubble">${escapeHtml(msg.content)}</div>${imgsHtml}`;
+  }
   else if (msg.role === 'assistant') el.innerHTML = `<div class="bubble md">${renderAssistant(msg.content)}</div>`;
   else if (msg.role === 'error') el.innerHTML = `<div class="bubble err">${escapeHtml(msg.content)}</div>`;
   else el.innerHTML = `<div class="bubble sys">${escapeHtml(msg.content)}</div>`;
@@ -675,6 +696,7 @@ async function sendPrompt(text) {
     .join('\n\n');
   const images = state.pendingImages;
   const userMsg = { role: 'user', content: text };
+  if (images.length) userMsg.images = images.map(im => ({ id: im.id, dataUrl: im.dataUrl }));
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
   if (sess.untitled || isUntitled(sess.title)) {
     sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
@@ -742,10 +764,28 @@ async function handleSlash(cmd) {
   }
 }
 // 预设卡：按 data-preset 解耦（与翻译后的标题无关）
-document.querySelectorAll('.fcard').forEach(card => {
-  card.addEventListener('click', () => {
+document.querySelectorAll('.feature-grid').forEach(grid => {
+  grid.addEventListener('click', (e) => {
+    const xBtn = e.target.closest('.fc-x');
+    if (xBtn) {
+      e.stopPropagation();
+      const kind = xBtn.dataset.removeKind;
+      const id = xBtn.dataset.removeId;
+      if (kind === 'builtin') hideBuiltinPreset(id);
+      else if (kind === 'custom') removeCustomPreset(id);
+      return;
+    }
+    const card = e.target.closest('.fcard');
+    if (!card || !grid.contains(card)) return;
     const key = card.dataset.preset;
-    if (!key || key === 'add') { inputEl.focus(); closeModals(); return; }
+    if (key === 'add') { closeModals(); openModal('custom-preset-modal'); resetCustomPresetForm(); return; }
+    if (card.classList.contains('fcard-custom')) {
+      const id = card.dataset.id;
+      const cp = state.customPresets.find(p => p.id === id);
+      if (cp) { closeModals(); sendPrompt(cp.prompt); }
+      return;
+    }
+    if (!key) { inputEl.focus(); closeModals(); return; }
     const prompt = I18N[lang]['presetPrompt.' + key] || I18N.zh['presetPrompt.' + key];
     closeModals();
     if (prompt) sendPrompt(prompt);
@@ -1026,12 +1066,20 @@ function applyToggleClass() {
 if (planChip) planChip.addEventListener('click', (e) => {
   e.preventDefault();
   state.planMode = !state.planMode;
+  if (state.planMode && state.autoMode) {
+    state.autoMode = false;
+    localStorage.setItem('ga_auto', '0');
+  }
   localStorage.setItem('ga_plan', state.planMode ? '1' : '0');
   applyToggleClass();
 });
 if (autoChip) autoChip.addEventListener('click', (e) => {
   e.preventDefault();
   state.autoMode = !state.autoMode;
+  if (state.autoMode && state.planMode) {
+    state.planMode = false;
+    localStorage.setItem('ga_plan', '0');
+  }
   localStorage.setItem('ga_auto', state.autoMode ? '1' : '0');
   applyToggleClass();
 });
@@ -1102,13 +1150,17 @@ if (imgInput) imgInput.addEventListener('change', () => {
 
 if (thumbStrip) thumbStrip.addEventListener('click', (e) => {
   const x = e.target.closest('.x');
-  if (!x) return;
-  const id = x.dataset.id;
-  const idx = state.pendingImages.findIndex(img => img.id === id);
-  if (idx >= 0) {
-    state.pendingImages.splice(idx, 1);
-    renderThumbStrip();
+  if (x) {
+    const id = x.dataset.id;
+    const idx = state.pendingImages.findIndex(img => img.id === id);
+    if (idx >= 0) {
+      state.pendingImages.splice(idx, 1);
+      renderThumbStrip();
+    }
+    return;
   }
+  const img = e.target.closest('img');
+  if (img && img.src) openLightbox(img.src);
 });
 
 /* ─── drag & drop on chat panel ─── */
@@ -1179,6 +1231,7 @@ if (langSel) {
     renderSessionList();
     refreshStatusLabel();
     updateModelChip();
+    if (typeof renderAllPresets === 'function') renderAllPresets();
   });
 }
 
@@ -1328,16 +1381,212 @@ if(tokUntil)tokUntil.addEventListener('change',()=>{_tokPage=0;loadTokenPage();}
 const tokResetBtn=document.getElementById('tok-reset');
 if(tokResetBtn)tokResetBtn.addEventListener('click',()=>{if(tokSince)tokSince.value='';if(tokUntil)tokUntil.value='';_tokPage=0;loadTokenPage();});
 nav.addEventListener('click',(e)=>{const item=e.target.closest('.nav-item');if(item&&item.dataset.page==='token')loadTokenPage();});
+/* ═══════════════ 自定义预设 ═══════════════ */
+const CP_KEY = 'ga_custom_presets';
+const HB_KEY = 'ga_hidden_builtins';
+
+const BUILTIN_PRESETS = [
+  { key: 'goal',    titleKey: 'preset.goal.t',    descKey: 'preset.goal.d',    promptKey: 'presetPrompt.goal',
+    iconSvg: '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/></svg>' },
+  { key: 'explore', titleKey: 'preset.explore.t', descKey: 'preset.explore.d', promptKey: 'presetPrompt.explore',
+    iconSvg: '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polygon points="16.2 7.8 14.1 14.1 7.8 16.2 9.9 9.9 16.2 7.8"/></svg>' },
+  { key: 'hive',    titleKey: 'preset.hive.t',    descKey: 'preset.hive.d',    promptKey: 'presetPrompt.hive',
+    iconSvg: '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 21 7 21 17 12 22 3 17 3 7"/><polygon points="12 8 16 10.3 16 14.7 12 17 8 14.7 8 10.3"/></svg>' },
+  { key: 'review',  titleKey: 'preset.review.t',  descKey: 'preset.review.d',  promptKey: 'presetPrompt.review',
+    iconSvg: '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' },
+  { key: 'mine',    titleKey: 'preset.mine.t',    descKey: 'preset.mine.d',    promptKey: 'presetPrompt.mine',
+    iconSvg: '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' },
+];
+const ADD_ICON_SVG = '<svg class="fc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+
+state.customPresets = [];
+state.hiddenBuiltins = new Set();
+
+function loadCustomPresets() {
+  try {
+    const raw = localStorage.getItem(CP_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    state.customPresets = Array.isArray(arr) ? arr.filter(p => p && p.id && p.title && p.prompt) : [];
+  } catch { state.customPresets = []; }
+}
+function saveCustomPresets() {
+  localStorage.setItem(CP_KEY, JSON.stringify(state.customPresets));
+}
+function loadHiddenBuiltins() {
+  try {
+    const raw = localStorage.getItem(HB_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    state.hiddenBuiltins = new Set(Array.isArray(arr) ? arr.filter(k => typeof k === 'string') : []);
+  } catch { state.hiddenBuiltins = new Set(); }
+}
+function saveHiddenBuiltins() {
+  localStorage.setItem(HB_KEY, JSON.stringify([...state.hiddenBuiltins]));
+}
+
+function makeCardEl({ kind, dataAttrs, iconSvg, titleText, descText, removable }) {
+  const card = document.createElement('div');
+  card.className = 'fcard ' + kind;
+  for (const [k, v] of Object.entries(dataAttrs || {})) card.dataset[k] = v;
+  card.innerHTML = iconSvg;
+  if (removable) {
+    const x = document.createElement('button');
+    x.className = 'fc-x';
+    x.type = 'button';
+    x.dataset.removeKind = kind === 'fcard-builtin' ? 'builtin' : 'custom';
+    x.dataset.removeId = dataAttrs?.id || dataAttrs?.preset || '';
+    x.dataset.i18nTitle = 'customPreset.removeTitle';
+    x.title = t('customPreset.removeTitle');
+    x.textContent = '×';
+    card.appendChild(x);
+  }
+  const titleEl = document.createElement('div');
+  titleEl.className = 'fc-t';
+  titleEl.textContent = titleText;
+  card.appendChild(titleEl);
+  const descEl = document.createElement('div');
+  descEl.className = 'fc-d';
+  descEl.textContent = descText;
+  card.appendChild(descEl);
+  return card;
+}
+
+function renderAllPresets() {
+  document.querySelectorAll('.feature-grid').forEach(grid => {
+    grid.innerHTML = '';
+    for (const bp of BUILTIN_PRESETS) {
+      if (state.hiddenBuiltins.has(bp.key)) continue;
+      grid.appendChild(makeCardEl({
+        kind: 'fcard-builtin',
+        dataAttrs: { preset: bp.key },
+        iconSvg: bp.iconSvg,
+        titleText: t(bp.titleKey),
+        descText: t(bp.descKey),
+        removable: true,
+      }));
+    }
+    for (const cp of state.customPresets) {
+      grid.appendChild(makeCardEl({
+        kind: 'fcard-custom',
+        dataAttrs: { id: cp.id },
+        iconSvg: ADD_ICON_SVG,
+        titleText: cp.title,
+        descText: cp.prompt,
+        removable: true,
+      }));
+    }
+    const addCard = makeCardEl({
+      kind: 'add',
+      dataAttrs: { preset: 'add' },
+      iconSvg: ADD_ICON_SVG,
+      titleText: t('preset.add.t'),
+      descText: t('preset.add.d'),
+      removable: false,
+    });
+    grid.appendChild(addCard);
+  });
+  updateRestoreBtnVisibility();
+}
+
+function addCustomPreset(title, prompt) {
+  const id = 'cp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+  state.customPresets.push({ id, title, prompt });
+  saveCustomPresets();
+  renderAllPresets();
+}
+function removeCustomPreset(id) {
+  const idx = state.customPresets.findIndex(p => p.id === id);
+  if (idx < 0) return;
+  state.customPresets.splice(idx, 1);
+  saveCustomPresets();
+  renderAllPresets();
+}
+function hideBuiltinPreset(key) {
+  if (!BUILTIN_PRESETS.some(bp => bp.key === key)) return;
+  state.hiddenBuiltins.add(key);
+  saveHiddenBuiltins();
+  renderAllPresets();
+}
+function restoreBuiltinPresets() {
+  state.hiddenBuiltins.clear();
+  saveHiddenBuiltins();
+  renderAllPresets();
+}
+function updateRestoreBtnVisibility() {
+  const btn = document.getElementById('preset-restore-btn');
+  if (!btn) return;
+  btn.hidden = state.hiddenBuiltins.size === 0;
+}
+
+const cpModal = document.getElementById('custom-preset-modal');
+const cpTitleInput = document.getElementById('cp-title');
+const cpPromptInput = document.getElementById('cp-prompt');
+const cpSaveBtn = document.getElementById('cp-save');
+const cpError = document.getElementById('cp-error');
+function resetCustomPresetForm() {
+  if (cpTitleInput) cpTitleInput.value = '';
+  if (cpPromptInput) cpPromptInput.value = '';
+  if (cpError) { cpError.hidden = true; cpError.textContent = ''; }
+  setTimeout(() => { if (cpTitleInput) cpTitleInput.focus(); }, 0);
+}
+if (cpSaveBtn) cpSaveBtn.addEventListener('click', () => {
+  const title = (cpTitleInput?.value || '').trim();
+  const prompt = (cpPromptInput?.value || '').trim();
+  if (!title || !prompt) {
+    if (cpError) { cpError.textContent = t('customPreset.empty'); cpError.hidden = false; }
+    return;
+  }
+  addCustomPreset(title, prompt);
+  if (cpModal) cpModal.hidden = true;
+});
+
+const restoreBtn = document.getElementById('preset-restore-btn');
+if (restoreBtn) restoreBtn.addEventListener('click', () => { restoreBuiltinPresets(); });
+
+
+/* ═══════════════ 图片预览 lightbox ═══════════════ */
+const lightbox    = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightbox-img');
+function openLightbox(src) {
+  if (!lightbox || !lightboxImg || !src) return;
+  lightboxImg.src = src;
+  lightbox.hidden = false;
+}
+function closeLightbox() {
+  if (!lightbox || !lightboxImg) return;
+  lightbox.hidden = true;
+  lightboxImg.src = '';
+}
+if (lightbox) {
+  lightbox.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) closeLightbox();
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && lightbox && !lightbox.hidden) closeLightbox();
+});
+if (msgArea) {
+  msgArea.addEventListener('click', (e) => {
+    const img = e.target.closest('.bubble-imgs img');
+    if (img && img.src) openLightbox(img.src);
+  });
+}
 
 /* ═══════════════ 启动 ═══════════════ */
 applyAppearance(appearance, plainUi);
 applyTheme(theme);
 state.planMode = localStorage.getItem('ga_plan') === '1';
 state.autoMode = localStorage.getItem('ga_auto') === '1';
+if (state.planMode && state.autoMode) {
+  state.autoMode = false;
+  localStorage.setItem('ga_auto', '0');
+}
 applyToggleClass();
 applyI18n();
 updateModelChip();
 renderSessionList();
+loadCustomPresets();
+loadHiddenBuiltins();
+renderAllPresets();
 refreshEmptyState(null);
 runLabel.textContent = t('status.connecting');
 window.ga.startBridge && window.ga.startBridge();

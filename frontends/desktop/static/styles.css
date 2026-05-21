@@ -799,3 +799,108 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
   pointer-events:none;
   z-index:50;
 }
+
+/* ─── message bubble: image attachments ─── */
+.bubble-imgs{
+  display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;
+}
+.bubble-imgs img{
+  width:120px; height:120px;
+  border-radius:8px;
+  border:1px solid var(--line);
+  background:var(--field-bg);
+  object-fit:cover;
+  cursor:zoom-in;
+  display:block;
+}
+
+/* ─── lightbox (image preview) ─── */
+.lightbox{
+  position:fixed; inset:0; z-index:600;
+  display:flex; align-items:center; justify-content:center;
+}
+.lightbox[hidden]{ display:none; }
+.lightbox-backdrop{
+  position:absolute; inset:0;
+  background:var(--overlay);
+}
+.lightbox-img{
+  position:relative;
+  max-width:90vw; max-height:90vh;
+  border-radius:8px;
+  box-shadow:var(--shadow-modal);
+  background:var(--card);
+}
+.lightbox-x{
+  position:absolute; top:16px; right:16px;
+  width:36px; height:36px;
+  border:0; border-radius:50%;
+  background:var(--card); color:var(--txt-2);
+  font-size:20px; line-height:1;
+  cursor:pointer;
+  box-shadow:var(--shadow-pop);
+  display:flex; align-items:center; justify-content:center;
+  padding:0;
+}
+.lightbox-x:hover{ color:var(--danger); }
+.thumb img{ cursor:zoom-in; }
+
+/* ─── 自定义预设：卡上的删除按钮 ─── */
+.fcard{ position:relative; }
+.fcard .fc-x{
+  position:absolute; top:6px; right:6px;
+  width:20px; height:20px;
+  border:0; border-radius:50%;
+  background:var(--card); color:var(--txt-2);
+  font-size:14px; line-height:1;
+  cursor:pointer;
+  box-shadow:var(--shadow);
+  display:none; align-items:center; justify-content:center;
+  padding:0;
+}
+.fcard:hover .fc-x{ display:flex; }
+.fcard .fc-x:hover{ color:var(--danger); }
+
+/* ─── 自定义预设 modal 表单 ─── */
+.cp-body{
+  padding:18px; display:flex; flex-direction:column; gap:12px;
+  min-height:0;
+}
+.cp-input, .cp-textarea{
+  width:100%; box-sizing:border-box;
+  padding:10px 12px;
+  background:var(--field-bg);
+  border:1px solid var(--line); border-radius:8px;
+  color:var(--txt); font:inherit;
+  outline:none;
+}
+.cp-input:focus, .cp-textarea:focus{ border-color:var(--blue); }
+.cp-textarea{ resize:vertical; min-height:120px; }
+.cp-error{
+  font-size:12px; color:var(--danger);
+}
+.cp-actions{
+  display:flex; justify-content:flex-end; gap:8px;
+  margin-top:4px;
+}
+.cp-btn{
+  padding:8px 16px;
+  border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--txt);
+  cursor:pointer; font:inherit;
+}
+.cp-btn:hover{ background:var(--hover-2); }
+.cp-btn-primary{
+  background:var(--blue); color:var(--on-accent); border-color:var(--blue);
+}
+.cp-btn-primary:hover{ background:var(--blue); opacity:.9; }
+
+.preset-restore{
+  margin-left:auto; margin-right:8px;
+  padding:5px 12px; font-size:12px;
+  border:1px solid var(--line); border-radius:6px;
+  background:var(--card); color:var(--txt-2);
+  cursor:pointer; font-family:inherit;
+}
+.preset-restore:hover{ background:var(--hover-2); color:var(--blue); border-color:var(--blue); }
+.preset-restore[hidden]{ display:none; }
