@@ -59,6 +59,10 @@
 - **不影响**: F1 复制按钮（仍作用于 `pre>code`，最后一轮平铺时按钮可见；历史轮 `<details>` 折叠状态不渲染按钮，符合预期）
 - **风险面**: 中。流式增量渲染时若用户消息含 `<!--FOLD:N-->` 字面量会被误还原（极低概率，markdown 转义会清掉 `<` `>`）
 - **手测项**: 多轮历史折叠/展开、最后一轮 thinking/tool/result 单块折叠、复制按钮在末轮可见、zh/en 切换 summary 文案
+- **bug-fix1 (commit 待填)**: marked 吞 `<!--FOLD-->` 注释 → 改 `§§FOLD:N§§` 文本占位符 + 兼容 `<p>` 包裹的还原正则
+- **bug-fix2 (commit 待填) 根因**: `agent_loop.py:74` 实际产出 `🛠️ Tool: \`name\`  📥 args:\n\`\`\`\`text\n{json}\n\`\`\`\`` + 工具结果 5 反引号围栏，**非** `<function_calls>` XML。原正则永远 miss → turn 内无任何 stash → marked 直渲为代码块。修法：foldBlocks 增加两条正则匹配 emoji 头 + 4/5 反引号围栏；保留 XML 兼容
+- **CodeMemory 关联补遗**: `agent_loop.py::agent_runner_loop` (line 70~80) 是流式 chunk 的源头，前端任何 fold 正则**必须**对齐它的实际产物，不能依赖语义假设
+- **bug-fix3 (commit 待填)**: 模型按 system prompt 在回复开头会发 `<summary>...</summary>`（裸标签，非 `<details>` 子元素），sanitizeMarkdown 允许 `<summary>` 但浏览器对孤立 `<summary>` 不应用任何样式 → 看不到斜体浅色。foldBlocks 增 1 行正则把孤立 `<summary>` 改成 `<div class="turn-summary">`，CSS `.turn-summary{ italic + muted }` 即生效。注意：放在 thinking/tool/result 正则之后，避免吞掉将来 fold-turn 的 summary（fold-turn summary 由 JS 字符串拼接生成，不经过此 foldBlocks 内部正则路径，安全）
 
 ### F5: assistant 气泡 width:100%
 - **改点**: `styles.css` L578 `.bubble.md` 规则追加 `width:100%`（保留既有 `max-width:100%`）

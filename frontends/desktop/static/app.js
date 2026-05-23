@@ -790,9 +790,18 @@ function renderAssistant(text) {
   const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return `\n\n§§FOLD:${folds.length - 1}§§\n\n`; };
   const foldBlocks = (body) => {
     let s = body;
+    // thinking: 兼容 <thinking> XML 与 <details>...</details>（未来扩展）
     s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
+    // 工具调用：agent_loop 实际格式 = "🛠️ Tool: `name`  📥 args:\n````text\n{json}\n````"
+    s = s.replace(/🛠️ Tool: `([^`]+)`[^\n]*\n````text\n([\s\S]*?)\n````/g,
+                  (_, name, json) => stash(`${t('fold.tool')}: ${name}`, json, 'fold-tool'));
+    // 工具结果：5 反引号围栏
+    s = s.replace(/`{5}\n([\s\S]*?)\n`{5}/g, (_, body) => stash(t('fold.toolResult'), body, 'fold-result'));
+    // 兼容旧 XML 标记（保险）
     s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
     s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
+    // 模型在回复开头自带 <summary>...</summary>（非 <details> 子元素），转为弱化样式块
+    s = s.replace(/<summary>([\s\S]*?)<\/summary>/gi, (_, inner) => `<div class="turn-summary">${inner}</div>`);
     return renderMarkdown(s);
   };
   // 3) 拼装：历史轮包 details 默认折叠，最后一轮平铺
