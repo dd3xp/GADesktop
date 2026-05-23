@@ -275,22 +275,29 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; }
 
 .lang-list{ margin-bottom:0; }
 
-.chat-font-row{
-  display:flex; align-items:flex-start; gap:12px;
+.chat-font-panel{
+  display:grid; grid-template-columns:1fr auto; grid-template-rows:auto auto;
+  column-gap:14px; row-gap:6px; align-items:center;
+  padding:12px 14px; border:1px solid var(--line); border-radius:10px;
+  background:var(--field-bg);
 }
-.chat-font-stepper-wrap{ flex:1; min-width:0; }
-.chat-font-stepper{
-  padding:4px 0 2px; cursor:pointer; touch-action:none; border-radius:8px;
+.chat-font-stepper{ grid-column:1; grid-row:1; cursor:pointer; touch-action:none; border-radius:6px; }
+.chat-font-value{
+  grid-column:2; grid-row:1 / 3; align-self:center;
+  font-size:13px; font-weight:600; color:var(--txt-strong);
+  font-variant-numeric:tabular-nums; text-align:right; line-height:1;
+  padding-left:14px; border-left:1px solid var(--line); min-width:42px;
 }
+.chat-font-scale{ grid-column:1; grid-row:2; }
 .chat-font-stepper:focus{ outline:none; }
 .chat-font-stepper:focus-visible{
-  outline:2px solid var(--blue); outline-offset:3px;
+  outline:2px solid var(--blue); outline-offset:2px;
 }
 .chat-font-segments{
   display:grid; grid-template-columns:repeat(11, 1fr); gap:3px;
 }
 .chat-font-seg{
-  height:8px; border:none; padding:0; margin:0; border-radius:2px;
+  height:7px; border:none; padding:0; margin:0; border-radius:2px;
   background:var(--line); cursor:pointer;
   transition:background .12s;
 }
@@ -300,13 +307,12 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; }
 .chat-font-seg.on:hover{ background:color-mix(in srgb, var(--blue) 55%, var(--line)); }
 .chat-font-seg.cur:hover{ background:var(--blue); }
 .chat-font-scale{
-  display:flex; justify-content:space-between; margin-top:4px;
-  padding:0 4px; font-size:10px; color:var(--muted2); font-variant-numeric:tabular-nums;
+  display:grid; grid-template-columns:repeat(11, 1fr); gap:3px;
+  font-size:11px; line-height:1; color:var(--muted); font-variant-numeric:tabular-nums;
 }
-.chat-font-value{
-  flex:0 0 36px; font-size:12px; font-weight:600; color:var(--txt-2);
-  font-variant-numeric:tabular-nums; text-align:right; line-height:28px;
-}
+.chat-font-scale-min{ grid-column:1; justify-self:start; }
+.chat-font-scale-max{ grid-column:11; justify-self:end; }
+.chat-font-stepper:focus{ outline:none; }
 
 /* 颜色：mac 式 4×2 色盘 */
 .color-grid{
