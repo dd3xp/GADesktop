@@ -108,6 +108,10 @@
               </div>
               <div class="feature-grid"></div>
             </div>
+            <div class="msg-loading" id="msg-loading" hidden aria-live="polite">
+              <span class="ga-spin" aria-hidden="true"></span>
+              <span data-i18n="chat.interrupting"></span>
+            </div>
           </div>
           <div class="composer">
             <div class="composer-top">
@@ -130,7 +134,7 @@
                   <span data-i18n="chip.auto"></span>
                 </button>
               </div>
-              <button class="send">
+              <button class="send" id="send-btn" type="button">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
             </div>
@@ -419,7 +423,7 @@
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <!-- highlight.js -->
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=17"></script>
 <script src="annot.js"></script><!-- DEV 脚手架，可删 -->
 </body>
 </html>
