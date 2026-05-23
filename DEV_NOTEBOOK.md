@@ -34,13 +34,31 @@
 - [x] **F4: IME 输入法兼容** ✅ commit `47b0488` (2026-05-24)
 - [x] **F1: SVG icon 复制按钮** ✅ commit `27e3480` (2026-05-24)
 - [x] **F5: assistant 气泡宽度固定 100%** ✅ commit 待填 (2026-05-24)
-- [ ] F3: 消息折叠（assistant turn collapsible）
+- [x] **F3: 消息折叠（turn-level + HTML注释占位符）** ✅ commit 待填 (2026-05-24)
 - [ ] F2: bubble-copy-btn（消息气泡级复制按钮）
 - [ ] F6: 智能滚动（frozen turns + live zone + isNearBottom 增量渲染）
 
 > 顺序由依赖与风险决定：F4(零依赖)→F1(零依赖)→F5(气泡布局)→F3(msg格式)→F2(依赖F1常量)→F6(高风险，最后)
 
 ## CodeMemory 关联（手工索引，每个feature后追加）
+
+### F3: 消息折叠（turn-level + HTML注释占位符）
+- **触点**: `app.js::renderAssistant` 重写（`+30 行`），i18n 新增 `fold.turn` 中英两键
+- **决策点**（已采纳方案 1=全推荐）：
+  - 1A 占位符 `<!--FOLD:i-->` 取代裸 `\x01F${i}\x01`（修复正则 `F\d+` 误吞正文 `F12` 等串）
+  - 2A 引入 turn-level `<details class="fold fold-turn">` 包裹历史轮（默认折叠），最后一轮平铺
+  - 3B 工具调用正则保持仅 `<function_calls>` / `<function_results>`（不引入 emoji/5反引号死代码）
+  - 4B `<summary>` → `.turn-summary` 推迟到 F2（CSS 已有，需配 strip-on-copy 配套）
+  - 5B fold-retry 暂不实施（无明确触发块）
+- **新结构**:
+  1. 用 `turnRe = /\**LLM Running \(Turn (\d+)\) \.\.\.\**/g` 切分原文为 segs[]（每 seg 含 `n` + `body`）
+  2. 块级（thinking/function_calls/function_results）→ `stash()` 写入 folds[]，回填 `<!--FOLD:i-->` 注释占位
+  3. seg 渲染 markdown 后：非末尾轮包 `<details fold-turn>`、末尾轮平铺
+  4. 最后一次性 `replace(/<!--FOLD:(\d+)-->/g)` 还原成 `<details class="fold fold-XXX">`
+- **i18n**: `fold.turn = '第 {n} 轮' / 'Turn {n}'`，渲染时 `t('fold.turn').replace('{n}', n)` 形成 summary 文本
+- **不影响**: F1 复制按钮（仍作用于 `pre>code`，最后一轮平铺时按钮可见；历史轮 `<details>` 折叠状态不渲染按钮，符合预期）
+- **风险面**: 中。流式增量渲染时若用户消息含 `<!--FOLD:N-->` 字面量会被误还原（极低概率，markdown 转义会清掉 `<` `>`）
+- **手测项**: 多轮历史折叠/展开、最后一轮 thinking/tool/result 单块折叠、复制按钮在末轮可见、zh/en 切换 summary 文案
 
 ### F5: assistant 气泡 width:100%
 - **改点**: `styles.css` L578 `.bubble.md` 规则追加 `width:100%`（保留既有 `max-width:100%`）

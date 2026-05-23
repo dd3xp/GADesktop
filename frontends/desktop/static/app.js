@@ -286,7 +286,7 @@ const I18N = {
     'upload.removeTitle': '移除',
     'upload.dropHint': '松开以上传文件',
     'lightbox.closeTitle': '关闭',
-    'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running',
+    'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running', 'fold.turn': '第 {n} 轮',
     'model.auto': '自动选择',
     'model.menuLabel': '选择模型',
     'chip.plan': 'Plan',
@@ -391,7 +391,7 @@ const I18N = {
     'upload.removeTitle': 'Remove',
     'upload.dropHint': 'Drop to upload files',
     'lightbox.closeTitle': 'Close',
-    'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running',
+    'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running', 'fold.turn': 'Turn {n}',
     'model.auto': 'Auto',
     'model.menuLabel': 'Select model',
     'chip.plan': 'Plan',
@@ -766,19 +766,49 @@ function renderMarkdown(text) {
   } catch (_) { return escapeHtml(text); }
 }
 function renderAssistant(text) {
-  let s = String(text || '');
+  const src = String(text || '');
+  // 1) 按 "LLM Running (Turn N)..." 标记切分多轮；N 从原文捕获，无硬编码文案
+  const turnRe = /\**LLM Running \(Turn (\d+)\) \.\.\.\**/g;
+  const marks = [];
+  let mm;
+  while ((mm = turnRe.exec(src)) !== null) {
+    marks.push({ idx: mm.index, end: mm.index + mm[0].length, n: mm[1] });
+  }
+  const segs = [];
+  if (marks.length === 0) {
+    segs.push({ n: null, body: src });
+  } else {
+    if (marks[0].idx > 0) segs.push({ n: null, body: src.slice(0, marks[0].idx) });
+    for (let i = 0; i < marks.length; i++) {
+      const start = marks[i].end;
+      const stop = (i + 1 < marks.length) ? marks[i + 1].idx : src.length;
+      segs.push({ n: marks[i].n, body: src.slice(start, stop) });
+    }
+  }
+  // 2) 块级折叠：占位符使用 HTML 注释，避免与正文 F\d+ 冲突
   const folds = [];
-  const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return ` F${folds.length - 1} `; };
-  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
-  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
-  s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
-  s = s.replace(/(\**LLM Running \(Turn \d+\) \.\.\.\**)/g, m => stash(t('fold.llm'), m, 'fold-turn'));
-  let html = renderMarkdown(s);
-  html = html.replace(/F(\d+)/g, (_, i) => {
-    const f = folds[Number(i)];
-    return `<details class="fold ${f.cls || ''}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
+  const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return `\n\n§§FOLD:${folds.length - 1}§§\n\n`; };
+  const foldBlocks = (body) => {
+    let s = body;
+    s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
+    s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
+    s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
+    return renderMarkdown(s);
+  };
+  // 3) 拼装：历史轮包 details 默认折叠，最后一轮平铺
+  const turnLabel = (n) => t('fold.turn').replace('{n}', n);
+  const parts = segs.map((seg, i) => {
+    const inner = foldBlocks(seg.body);
+    const isLast = (i === segs.length - 1);
+    if (seg.n == null) return inner;
+    if (isLast) return `<div class="turn-summary">${escapeHtml(turnLabel(seg.n))}</div>${inner}`;
+    return `<details class="fold fold-turn"><summary>${escapeHtml(turnLabel(seg.n))}</summary>${inner}</details>`;
   });
-  return html;
+  // 4) 还原块级占位符
+  return parts.join('').replace(/(?:<p>\s*)?§§FOLD:(\d+)§§(?:\s*<\/p>)?/g, (_, i) => {
+    const f = folds[Number(i)];
+    return `<details class="fold ${f.cls}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
+  });
 }
 /* ═══════════════ 渲染后增强 (PR移植) ═══════════════ */
 /* ───────────── 统一复制 SVG Icon ───────────── */
