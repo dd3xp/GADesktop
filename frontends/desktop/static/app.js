@@ -264,8 +264,9 @@ const I18N = {
     'status.disconnected': '未连接', 'status.stopped': '已停止', 'status.idle': '空闲',
     'conv.emptyList': '暂无会话，点「＋ 新对话」开始', 'conv.defaultTitle': '新对话',
     'err.bridge': 'bridge 未连接', 'err.newSession': '新建会话失败', 'err.poll': '轮询失败', 'err.stop': '停止失败',
-    'err.interruptTimeout': '停止当前任务超时，请稍后再试',
-    'sys.interrupted': '已停止当前任务',
+    'err.interruptTimeout': '等待上一轮停止超时，请稍后再试',
+    'sys.interruptPrev.hint': '已停止上一轮，正在处理新消息',
+    'chat.interrupting': '正在停止上一轮…',
     'sys.stopRequested': '已请求停止',
     'slash.help': '可用命令：\n/new 新会话  /clear 清屏  /stop 停止  /settings 设置',
     'slash.unknown': '未知命令',
@@ -359,8 +360,9 @@ const I18N = {
     'status.disconnected': 'Disconnected', 'status.stopped': 'Stopped', 'status.idle': 'Idle',
     'conv.emptyList': 'No chats yet — click “＋ New chat”', 'conv.defaultTitle': 'New chat',
     'err.bridge': 'Bridge not connected', 'err.newSession': 'Failed to create session', 'err.poll': 'Polling failed', 'err.stop': 'Stop failed',
-    'err.interruptTimeout': 'Timed out stopping the current task — try again',
-    'sys.interrupted': 'Stopped the current task',
+    'err.interruptTimeout': 'Timed out waiting for the previous reply to stop — try again',
+    'sys.interruptPrev.hint': 'Previous reply stopped — processing new message',
+    'chat.interrupting': 'Stopping previous reply…',
     'sys.stopRequested': 'Stop requested',
     'slash.help': 'Commands:\n/new new chat  /clear clear  /stop stop  /settings settings',
     'slash.unknown': 'Unknown command',
@@ -734,7 +736,11 @@ const chatPage   = document.querySelector('.page[data-page="chat"]');
 const msgArea    = chatPage.querySelector('.msg-area');
 const chatStart  = msgArea.querySelector('.chat-start');
 const inputEl    = chatPage.querySelector('.input');
-const sendBtn    = chatPage.querySelector('.send');
+const sendBtn    = document.getElementById('send-btn');
+const composerEl = chatPage.querySelector('.composer');
+const msgLoading = document.getElementById('msg-loading');
+const MIN_MSG_LOADING_MS = 450;
+let _submitInFlight = false;
 const runToggle  = document.getElementById('run-toggle');
 const runLabel   = runToggle.querySelector('.rs-label');
 const convListEl = document.querySelector('.conv-list');
@@ -783,7 +789,11 @@ const modelNameEl= modelChip ? modelChip.querySelector('.model-name') : null;
 
 let msgsEl = null;
 function ensureMsgs() {
-  if (!msgsEl) { msgsEl = document.createElement('div'); msgsEl.className = 'msgs'; msgArea.appendChild(msgsEl); }
+  if (!msgsEl) {
+    msgsEl = document.createElement('div');
+    msgsEl.className = 'msgs';
+    msgArea.insertBefore(msgsEl, msgLoading || null);
+  }
   return msgsEl;
 }
 function refreshEmptyState(sess) {
@@ -1096,25 +1106,51 @@ async function waitSessionIdle(sess, maxMs = 4000) {
   return !rt(sess).busy;
 }
 
+function setMsgLoading(on) {
+  if (msgArea) msgArea.classList.toggle('is-loading', !!on);
+  if (msgLoading) {
+    msgLoading.hidden = !on;
+    if (on) scrollBottom();
+  }
+}
+
+function setComposerLocked(on) {
+  if (composerEl) composerEl.classList.toggle('is-locked', !!on);
+  if (inputEl) inputEl.readOnly = !!on;
+  if (sendBtn) {
+    sendBtn.disabled = !!on;
+    sendBtn.classList.toggle('is-busy', !!on);
+    sendBtn.setAttribute('aria-busy', on ? 'true' : 'false');
+  }
+}
+
 /** stapp.py 同款：运行中再发 → cancel 当前轮次，等 idle 后再提交新 prompt */
 async function interruptBeforeSend(sess) {
   if (!rt(sess).busy) return true;
-  clearDraft(sess);
+  const t0 = Date.now();
+  setMsgLoading(true);
   try {
-    const res = await window.ga.rpc('session/cancel', { sessionId: sess.bridgeSessionId || sess.id });
-    if (res?.error) throw new Error(res.error.message || res.error);
-  } catch (e) {
-    showChanToast(t('err.stop') + ': ' + (e.message || e), '', 'err');
-    return false;
+    clearDraft(sess);
+    try {
+      const res = await window.ga.rpc('session/cancel', { sessionId: sess.bridgeSessionId || sess.id });
+      if (res?.error) throw new Error(res.error.message || res.error);
+    } catch (e) {
+      showChanToast(t('err.stop') + ': ' + (e.message || e), '', 'err');
+      return false;
+    }
+    showChanToast(t('sys.interruptPrev.hint'), '', 'info');
+    const idle = await waitSessionIdle(sess);
+    clearDraft(sess);
+    if (!idle) {
+      showChanToast(t('err.interruptTimeout'), '', 'err');
+      return false;
+    }
+    return true;
+  } finally {
+    const wait = Math.max(0, MIN_MSG_LOADING_MS - (Date.now() - t0));
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    setMsgLoading(false);
   }
-  showChanToast(t('sys.interrupted'), '', 'ok');
-  const idle = await waitSessionIdle(sess);
-  clearDraft(sess);
-  if (!idle) {
-    showChanToast(t('err.interruptTimeout'), '', 'err');
-    return false;
-  }
-  return true;
 }
 
 /* ═══════════════ 发送 / 取消 ═══════════════ */
@@ -1184,6 +1220,7 @@ async function cancelPrompt() {
 
 /* ═══════════════ 输入区 / slash / 预设 ═══════════════ */
 async function submitInput() {
+  if (_submitInFlight) return;
   const text = inputEl.value;
   if (!text.trim()) return;
   if (text.trim().startsWith('/')) {
@@ -1192,10 +1229,17 @@ async function submitInput() {
     handleSlash(text.trim());
     return;
   }
-  const sent = await sendPrompt(text);
-  if (sent) {
-    inputEl.value = '';
-    inputEl.style.height = 'auto';
+  _submitInFlight = true;
+  setComposerLocked(true);
+  try {
+    const sent = await sendPrompt(text);
+    if (sent) {
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+    }
+  } finally {
+    _submitInFlight = false;
+    setComposerLocked(false);
   }
 }
 sendBtn.addEventListener('click', (e) => { e.preventDefault(); submitInput(); });
@@ -2162,7 +2206,7 @@ function showChanToast(title, detail, kind) {
   if (_chanToastTimer) clearTimeout(_chanToastTimer);
   root.innerHTML = '';
   const el = document.createElement('div');
-  el.className = `toast toast-${kind === 'ok' ? 'ok' : 'err'}`;
+  el.className = `toast toast-${kind === 'err' ? 'err' : kind === 'info' ? 'info' : 'ok'}`;
   const tEl = document.createElement('span');
   tEl.className = 'toast-title';
   tEl.textContent = title;
