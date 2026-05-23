@@ -312,7 +312,6 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; }
 }
 .chat-font-scale-min{ grid-column:1; justify-self:start; }
 .chat-font-scale-max{ grid-column:11; justify-self:end; }
-.chat-font-stepper:focus{ outline:none; }
 
 /* 颜色：mac 式 4×2 色盘 */
 .color-grid{
