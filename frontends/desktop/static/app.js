@@ -817,12 +817,22 @@ function renderAssistant(text) {
   };
   // 3) 拼装：历史轮包 details 默认折叠，最后一轮平铺
   const turnLabel = (n) => t('fold.turn').replace('{n}', n);
+  // 从原始 seg.body 中抽出该轮首个 <summary>...</summary> 文本，作为折叠头副标题
+  const extractTurnSummary = (raw) => {
+    const m = /<summary>([\s\S]*?)<\/summary>/i.exec(raw || '');
+    if (!m) return '';
+    return m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  };
   const parts = segs.map((seg, i) => {
     const inner = foldBlocks(seg.body);
     const isLast = (i === segs.length - 1);
     if (seg.n == null) return inner;
-    if (isLast) return `<div class="turn-summary">${escapeHtml(turnLabel(seg.n))}</div>${inner}`;
-    return `<details class="fold fold-turn"><summary>${escapeHtml(turnLabel(seg.n))}</summary>${inner}</details>`;
+    const sum = extractTurnSummary(seg.body);
+    const head = sum
+      ? `${escapeHtml(turnLabel(seg.n))}：<span class="turn-head-sum">${escapeHtml(sum)}</span>`
+      : escapeHtml(turnLabel(seg.n));
+    if (isLast) return `<div class="turn-summary">${head}</div>${inner}`;
+    return `<details class="fold fold-turn"><summary>${head}</summary>${inner}</details>`;
   });
   // 4) 还原块级占位符
   return parts.join('').replace(/(?:<p>\s*)?§§FOLD:(\d+)§§(?:\s*<\/p>)?/g, (_, i) => {

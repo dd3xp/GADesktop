@@ -106,6 +106,10 @@
 - 2026-05-24 Q1A: 保留 PR#5 打断逻辑；Q2A: 保留 97f613d busy→stop；Q3: 保留 .user-stack 容器
 - 2026-05-24 新bridge `BRIDGE_PORT=14169` 测试用，旧 14168 不动
 - 2026-05-24 F4/F1 完成，CSS hover 用 `--line-soft` 替代旧的 `--bg`（更温和）
+- 2026-05-24 F5/F3/F2/F6 完成。全部 commit 在 `feat/frontend-enhancements-v2`
+  - F3 (39a8eb8+4e729ff): turn 折叠正则与 agent_loop 流式输出对齐；首个 `<summary>` 走斜体浅色
+  - F2 (8bd80a8): `.bubble-copy-btn` 挂在 `.msg` 下，需 `.msg{flex-wrap:wrap}` 让按钮换行到气泡下方；`extractLastTurnForCopy()` 复用 F3 turnRe 取最后一轮并剥 `<summary>`
+  - F6 (c8d2290): 抽出 `rewriteDraftBubble(r,visible)` —— 渲染**前**测 `isNearBottom()` + 记 `<details>` open 索引；innerHTML 替换后按索引恢复 open；仅 wasNear 才滚。**关键避坑**：直接在 typewriter tick 内 `scrollBottom()` 永远贴底（每 tick 重写 innerHTML 导致 details 销毁 + height 抖动，isNearBottom 必为 true）
 
 ## 避坑
 - main-3 失败模式：`git merge main` 时把 PR#5/#6 当旧代码"覆盖掉"，行级无冲突但语义回退

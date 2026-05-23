@@ -1333,3 +1333,7 @@ html[data-appearance="dark"] .bubble.md pre code{ color:var(--txt-2); }
   display:block; font-style:italic; color:var(--muted);
   font-size:12px; margin-bottom:6px;
 }
+/* 历史轮 <summary> 头部的副标题（来自模型 <summary> 抽取） */
+.fold-turn > summary .turn-head-sum{
+  font-style:italic; color:var(--muted); font-weight:normal; margin-left:4px;
+}
