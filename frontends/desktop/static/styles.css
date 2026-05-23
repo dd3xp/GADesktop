@@ -566,7 +566,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 
 /* 消息流 */
 .msgs{ width:100%; max-width:760px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
-.msg{ display:flex; }
+.msg{ display:flex; flex-wrap:wrap; }
 .msg.user{ justify-content:flex-end; }
 .msg.assistant,.msg.error{ justify-content:flex-start; }
 .msg.system{ justify-content:center; }
@@ -1298,6 +1298,17 @@ html[data-boot-has-sessions] .chat-start{ display:none !important; }
 .katex-block:hover .latex-copy-btn{ opacity:1; }
 .latex-copy-btn:hover{ background:var(--line-soft); color:var(--txt-2); }
 .latex-copy-btn svg{ width:14px; height:14px; }
+/* ---- 气泡级复制按钮 (F2) ---- */
+.bubble-copy-btn{
+  display:inline-flex; align-items:center; flex-basis:100%;
+  margin-top:2px; padding:2px 4px; border:none; background:none;
+  color:var(--muted); cursor:pointer; opacity:0; transition:opacity .15s;
+}
+.msg:hover .bubble-copy-btn{ opacity:1; }
+.msg.user .bubble-copy-btn{ justify-content:flex-end; }
+.msg.assistant .bubble-copy-btn{ justify-content:flex-start; }
+.bubble-copy-btn:hover{ color:var(--txt-2); }
+.bubble-copy-btn svg{ width:14px; height:14px; }
 /* ---- highlight.js 适配 ---- */
 .hljs{ background:transparent !important; padding:0 !important; }
 html[data-appearance="dark"] .bubble.md{

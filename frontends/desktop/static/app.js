@@ -765,6 +765,17 @@ function renderMarkdown(text) {
     return html;
   } catch (_) { return escapeHtml(text); }
 }
+function extractLastTurnForCopy(text) {
+  const src = String(text || '');
+  // 与 renderAssistant 同款分隔正则；取最后一个 mark 之后的 body
+  const turnRe = /\**LLM Running \(Turn (\d+)\) \.\.\.\**/g;
+  let lastEnd = 0, mm;
+  while ((mm = turnRe.exec(src)) !== null) lastEnd = mm.index + mm[0].length;
+  let body = src.slice(lastEnd);
+  // 去掉模型在最后一轮开头的 <summary>...</summary>
+  body = body.replace(/<summary>[\s\S]*?<\/summary>\s*/i, '');
+  return body.trim();
+}
 function renderAssistant(text) {
   const src = String(text || '');
   // 1) 按 "LLM Running (Turn N)..." 标记切分多轮；N 从原文捕获，无硬编码文案
@@ -1026,6 +1037,23 @@ function msgNode(msg) {
   }
   else if (msg.role === 'error') el.innerHTML = `<div class="bubble err">${escapeHtml(msg.content)}</div>`;
   else el.innerHTML = `<div class="bubble sys">${escapeHtml(msg.content)}</div>`;
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'bubble-copy-btn';
+    copyBtn.title = t('act.copy');
+    copyBtn.innerHTML = SVG_COPY_ICON;
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const text = (msg.role === 'user')
+        ? stripAttachPlaceholders((typeof msg.display === 'string' && msg.display.length) ? msg.display : (msg.content || ''))
+        : extractLastTurnForCopy(msg.content || '');
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = SVG_CHECK_ICON;
+        setTimeout(() => { copyBtn.innerHTML = SVG_COPY_ICON; }, 1500);
+      });
+    });
+    el.appendChild(copyBtn);
+  }
   return el;
 }
 function renderAllMessages(sess) {
