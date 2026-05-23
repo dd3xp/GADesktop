@@ -269,7 +269,7 @@ const I18N = {
     'slash.unknown': '未知命令',
     'upload.hint': '上传文件：选择 / 拖拽 / 粘贴',
     'upload.button': '上传文件',
-    'upload.tooLarge': '文件过大或数量超限',
+    'upload.tooLarge': '文件过大或数量超限', 'upload.empty': '跳过空文件',
     'upload.failed': '上传失败',
     'upload.removeTitle': '移除',
     'upload.dropHint': '松开以上传文件',
@@ -292,12 +292,16 @@ const I18N = {
     'st.starting': '启动中…', 'st.stopping': '停止中…',
     'st.online': '在线', 'st.offline': '离线', 'st.error': '错误', 'st.running': '运行', 'st.abnormal': '异常',
     'act.configure': '配置', 'act.logs': '日志', 'act.restart': '重启', 'act.stop': '停止', 'act.start': '启动',
+    'act.copy': '复制', 'act.copied': '已复制', 'act.copyTex': 'TeX',
     'proc.imbotWechat': 'imbot · 微信', 'proc.imbotDing': 'imbot · 钉钉', 'proc.scheduler': '定时任务调度',
     'cm.scheduling': '调度中', 'cm.running': '执行中', 'cm.idleSt': '空闲',
     'cm.master': '已派 3 子任务', 'cm.w1': '子任务：抓取数据', 'cm.w2': '子任务：复核结果', 'cm.sub': '等待派单',
     'tok.total': '累计 token', 'tok.cost': '估算成本', 'tok.today': '今日 token',
     'tok.colSession': '会话', 'tok.colIn': '输入', 'tok.colOut': '输出', 'tok.colCacheW': '缓存写入', 'tok.colCache': '缓存读取', 'tok.colCost': '成本',
     'tok.from': '从', 'tok.to': '到', 'tok.reset': '重置', 'tok.noData': '暂无记录',
+    'tok.pricingUnknown': '⚠ 此模型计费规则尚未明确，按默认估算',
+    'tok.priceInput': '输入: $', 'tok.priceOutput': '输出: $',
+    'tok.priceCacheW': '缓存写入: $', 'tok.priceCacheR': '缓存读取: $',
     'presetPrompt.goal': '进入 Goal 模式：读 L3 goal mode SOP，自主达成我接下来描述的目标。',
     'presetPrompt.planMode': '进入 Plan 模式：读 L3 plan mode SOP，按其中的探索→规划→执行→验证流程完成我接下来描述的任务。',
     'presetPrompt.explore': '进入自主探索模式：自动浏览并定期向我汇总要点。',
@@ -358,7 +362,7 @@ const I18N = {
     'slash.unknown': 'Unknown command',
     'upload.hint': 'Upload file: pick / drag / paste',
     'upload.button': 'Upload file',
-    'upload.tooLarge': 'File too large or limit reached',
+    'upload.tooLarge': 'File too large or limit reached', 'upload.empty': 'Skipped empty file',
     'upload.failed': 'Upload failed',
     'upload.removeTitle': 'Remove',
     'upload.dropHint': 'Drop to upload files',
@@ -381,12 +385,16 @@ const I18N = {
     'st.starting': 'Starting…', 'st.stopping': 'Stopping…',
     'st.online': 'Online', 'st.offline': 'Offline', 'st.error': 'Error', 'st.running': 'Running', 'st.abnormal': 'Error',
     'act.configure': 'Configure', 'act.logs': 'Logs', 'act.restart': 'Restart', 'act.stop': 'Stop', 'act.start': 'Start',
+    'act.copy': 'Copy', 'act.copied': 'Copied', 'act.copyTex': 'TeX',
     'proc.imbotWechat': 'imbot · WeChat', 'proc.imbotDing': 'imbot · DingTalk', 'proc.scheduler': 'Scheduler',
     'cm.scheduling': 'Scheduling', 'cm.running': 'Running', 'cm.idleSt': 'Idle',
     'cm.master': 'Dispatched 3 subtasks', 'cm.w1': 'Subtask: fetch data', 'cm.w2': 'Subtask: review results', 'cm.sub': 'Waiting for tasks',
     'tok.total': 'Total tokens', 'tok.cost': 'Est. cost', 'tok.today': 'Today tokens',
     'tok.colSession': 'Session', 'tok.colIn': 'Input', 'tok.colOut': 'Output', 'tok.colCacheW': 'Cache write', 'tok.colCache': 'Cache read', 'tok.colCost': 'Cost',
     'tok.from': 'From', 'tok.to': 'To', 'tok.reset': 'Reset', 'tok.noData': 'No records',
+    'tok.pricingUnknown': '⚠ Pricing not confirmed, using defaults',
+    'tok.priceInput': 'Input: $', 'tok.priceOutput': 'Output: $',
+    'tok.priceCacheW': 'Cache write: $', 'tok.priceCacheR': 'Cache read: $',
     'presetPrompt.goal': 'Enter Goal mode: read the L3 goal-mode SOP and autonomously achieve the goal I describe next.',
     'presetPrompt.planMode': 'Enter Plan mode: read the L3 plan-mode SOP and follow its explore→plan→execute→verify flow for the task I describe next.',
     'presetPrompt.explore': 'Enter auto-explore mode: browse autonomously and periodically summarize key points to me.',
@@ -579,26 +587,100 @@ function sanitizeMarkdown(html) {
   rmv.forEach(el => el.remove());
   return tpl.innerHTML;
 }
+/* ═══════════════ LaTeX 保护 (PR移植) ═══════════════ */
+const _latexSlots = [];
+function protectLatex(text) {
+  _latexSlots.length = 0;
+  // 块级 $$...$$
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
+    const id = _latexSlots.length;
+    _latexSlots.push({ expr: expr.trim(), display: true });
+    return `<!--LATEX:${id}-->`;
+  });
+  // 行内 $...$（不贪婪，排除 $$ 和转义）
+  text = text.replace(/(?<!\\)\$([^\n$]+?)\$/g, (_, expr) => {
+    const id = _latexSlots.length;
+    _latexSlots.push({ expr: expr.trim(), display: false });
+    return `<!--LATEX:${id}-->`;
+  });
+  return text;
+}
+function restoreLatex(html) {
+  if (!_latexSlots.length) return html;
+  return html.replace(/<!--LATEX:(\d+)-->/g, (_, i) => {
+    const slot = _latexSlots[Number(i)];
+    if (!slot) return '';
+    if (typeof katex === 'undefined') {
+      return slot.display ? `<div class="katex-block">${escapeHtml(slot.expr)}</div>`
+                          : `<span class="katex-inline">${escapeHtml(slot.expr)}</span>`;
+    }
+    try {
+      const rendered = katex.renderToString(slot.expr, { displayMode: slot.display, throwOnError: false });
+      return slot.display ? `<div class="katex-block">${rendered}</div>`
+                          : `<span class="katex-inline">${rendered}</span>`;
+    } catch (_) { return escapeHtml(slot.expr); }
+  });
+}
+
 function renderMarkdown(text) {
   if (typeof marked === 'undefined') return escapeHtml(text).replace(/\n/g, '<br>');
-  try { return sanitizeMarkdown(marked.parse(String(text || ''))); }
-  catch (_) { return escapeHtml(text); }
+  try {
+    const protected_ = protectLatex(String(text || ''));
+    let html = sanitizeMarkdown(marked.parse(protected_));
+    html = restoreLatex(html);
+    return html;
+  } catch (_) { return escapeHtml(text); }
 }
 function renderAssistant(text) {
   let s = String(text || '');
   const folds = [];
-  const stash = (label, body) => { folds.push({ label, body }); return ` F${folds.length - 1} `; };
-  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, '')));
-  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m));
-  s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m));
-  s = s.replace(/(\**LLM Running \(Turn \d+\) \.\.\.\**)/g, m => stash(t('fold.llm'), m));
+  const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return ` F${folds.length - 1} `; };
+  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
+  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
+  s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
+  s = s.replace(/(\**LLM Running \(Turn \d+\) \.\.\.\**)/g, m => stash(t('fold.llm'), m, 'fold-turn'));
   let html = renderMarkdown(s);
   html = html.replace(/F(\d+)/g, (_, i) => {
     const f = folds[Number(i)];
-    return `<details class="fold"><summary>${escapeHtml(f.label)}</summary><pre>${escapeHtml(f.body)}</pre></details>`;
+    return `<details class="fold ${f.cls || ''}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
   });
   return html;
 }
+/* ═══════════════ 渲染后增强 (PR移植) ═══════════════ */
+function postRenderEnhance(containerEl) {
+  if (!containerEl) return;
+  // 代码高亮 + 复制按钮
+  containerEl.querySelectorAll('pre code').forEach(block => {
+    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+    if (!block.parentElement.querySelector('.code-copy-btn')) {
+      const btn = document.createElement('button');
+      btn.className = 'code-copy-btn'; btn.textContent = t('act.copy');
+      btn.onclick = () => {
+        navigator.clipboard.writeText(block.textContent).then(() => {
+          btn.textContent = t('act.copied'); setTimeout(() => btn.textContent = t('act.copy'), 1500);
+        });
+      };
+      block.parentElement.style.position = 'relative';
+      block.parentElement.appendChild(btn);
+    }
+  });
+  // KaTeX 复制按钮
+  containerEl.querySelectorAll('.katex-block').forEach(el => {
+    if (el.querySelector('.latex-copy-btn')) return;
+    const src = el.querySelector('annotation[encoding="application/x-tex"]');
+    if (!src) return;
+    const btn = document.createElement('button');
+    btn.className = 'latex-copy-btn'; btn.textContent = t('act.copyTex');
+    btn.onclick = () => {
+      navigator.clipboard.writeText(src.textContent).then(() => {
+        btn.textContent = '✓'; setTimeout(() => btn.textContent = t('act.copyTex'), 1500);
+      });
+    };
+    el.style.position = 'relative';
+    el.appendChild(btn);
+  });
+}
+
 
 /* ═══════════════ 状态 ═══════════════ */
 const state = {
@@ -715,14 +797,19 @@ function msgNode(msg) {
   const el = document.createElement('div');
   el.className = 'msg ' + (msg.role || 'system');
   if (msg.role === 'user') {
+    const shown = (typeof msg.display === 'string' && msg.display.length) ? msg.display : msg.content;
     const imgsHtml = (msg.images && msg.images.length)
       ? `<div class="user-imgs">${msg.images.map(im => `<img src="${im.dataUrl}" alt="">`).join('')}</div>`
       : '';
-    const cleanText = stripAttachPlaceholders(msg.content);
+    const cleanText = stripAttachPlaceholders(shown);
     const textHtml = cleanText ? `<div class="bubble">${escapeHtml(cleanText)}</div>` : '';
     el.innerHTML = `<div class="user-stack">${imgsHtml}${textHtml}</div>`;
   }
-  else if (msg.role === 'assistant') el.innerHTML = `<div class="bubble md">${renderAssistant(msg.content)}</div>`;
+  else if (msg.role === 'assistant') {
+    const body = msg.stopped ? (msg.content + '\n\n_[' + t('status.stopped') + ']_') : msg.content;
+    el.innerHTML = `<div class="bubble md">${renderAssistant(body)}</div>`;
+    postRenderEnhance(el.querySelector('.bubble'));
+  }
   else if (msg.role === 'error') el.innerHTML = `<div class="bubble err">${escapeHtml(msg.content)}</div>`;
   else el.innerHTML = `<div class="bubble sys">${escapeHtml(msg.content)}</div>`;
   return el;
@@ -738,6 +825,10 @@ function appendMessage(sess, msg) {
   refreshEmptyState(sess); scrollBottom();
 }
 function scrollBottom() { requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; }); }
+/* ═══════════════ 打字机效果 (PR移植) ═══════════════ */
+const TW_SPEED = 12;  // 每 tick 显示字符数
+const TW_INTERVAL = 30; // ms
+
 function renderDraft(sess) {
   const r = rt(sess);
   if (!isActive(sess)) return;
@@ -745,8 +836,34 @@ function renderDraft(sess) {
   if (!r.draftEl || r.draftEl.parentNode !== box) {
     r.draftEl = document.createElement('div'); r.draftEl.className = 'msg assistant'; box.appendChild(r.draftEl);
   }
-  r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(r.draftText)}<span class="cursor"></span></div>`;
+  if (!r.twState) r.twState = { shown: 0, timer: null };
+  const tw = r.twState;
+  if (!tw.timer) {
+    tw.timer = setInterval(() => {
+      const cur = r.draftText || '';
+      if (tw.shown >= cur.length) {
+        clearInterval(tw.timer); tw.timer = null;
+        return;
+      }
+      tw.shown = Math.min(tw.shown + TW_SPEED, cur.length);
+      const visible = cur.slice(0, tw.shown);
+      r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
+      postRenderEnhance(r.draftEl.querySelector('.bubble'));
+      scrollBottom();
+    }, TW_INTERVAL);
+  }
+  const visible = (r.draftText || '').slice(0, tw.shown);
+  r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
+  postRenderEnhance(r.draftEl.querySelector('.bubble'));
   refreshEmptyState(sess); scrollBottom();
+}
+
+function flushTypewriter(sess) {
+  const r = rt(sess);
+  if (r.twState) {
+    if (r.twState.timer) clearInterval(r.twState.timer);
+    r.twState = null;
+  }
 }
 
 /* ═══════════════ 运行状态 ═══════════════ */
@@ -880,7 +997,11 @@ convListEl.addEventListener('click', (e) => {
     return;
   }
   const it = e.target.closest('.conv-item');
-  if (it && it.dataset.id) setActiveSession(it.dataset.id);
+  if (it && it.dataset.id) {
+    setActiveSession(it.dataset.id);
+    const chatNav = nav.querySelector('.nav-item[data-page="chat"]');
+    if (chatNav && !chatNav.classList.contains('active')) chatNav.click();
+  }
 });
 convMenu.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -912,13 +1033,19 @@ document.addEventListener('click', () => { convMenu.hidden = true; });
 newConvBtn.addEventListener('click', (e) => { e.preventDefault(); newSession(); });
 
 /* ═══════════════ 轮询 + 流式 ═══════════════ */
-function normalize(m) { return { id: Number(m.id || 0), role: m.role || 'system', content: m.content || '' }; }
+function normalize(m) {
+  const o = { id: Number(m.id || 0), role: m.role || 'system', content: m.content || '' };
+  if (typeof m.display === 'string' && m.display.length) o.display = m.display;
+  if (m.stopped) o.stopped = true;
+  if (m.images) o.images = m.images;
+  return o;
+}
 function upsert(sess, raw, partial) {
   const m = normalize(raw); const r = rt(sess);
   if (partial && m.role === 'assistant') { r.draftText = m.content; if (isActive(sess)) renderDraft(sess); return; }
   if (!m.id || r.seen.has(m.id)) return;
   r.seen.add(m.id); r.lastId = Math.max(r.lastId, m.id);
-  if (m.role === 'assistant' && r.draftEl) { r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
+  if (m.role === 'assistant' && r.draftEl) { flushTypewriter(sess); r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
   sess.messages.push(m); appendMessage(sess, m);
   saveSessions();
 }
@@ -937,18 +1064,7 @@ async function pollSession(sess) {
       setBusy(sess, busy);
       if (busy) await new Promise(z => setTimeout(z, 500));
       else {
-        // 退出 poll：若草稿还在(取消时 bridge 不发 final),把已流式输出的文本定稿,加 [已停止] 标记
-        if (r.draftEl) {
-          if (r.draftText && r.draftText.trim()) {
-            const m = { role:'assistant', content: r.draftText + '\n\n_[' + t('status.stopped') + ']_' };
-            sess.messages.push(m);
-            r.draftEl.remove(); r.draftEl = null; r.draftText = '';
-            if (isActive(sess)) appendMessage(sess, m);
-            saveSessions();
-          } else {
-            r.draftEl.remove(); r.draftEl = null;
-          }
-        }
+        if (r.draftEl) { r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
         break;
       }
     } while (true);
@@ -1000,7 +1116,7 @@ async function sendPrompt(text) {
         saveSessions();
       }
     }
-    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, llmNo: state.llmNo });
+    const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, display: text, llmNo: state.llmNo });
     if (res?.error) throw new Error(res.error.message || res.error);
     state.pendingFiles = [];
     renderThumbStrip();
@@ -1462,14 +1578,17 @@ async function addFiles(fileList) {
   const files = Array.from(fileList || []);
   if (files.length === 0) return;
   let skipped = false;
+  let emptyHit = false;
   const accepted = [];
   for (const f of files) {
+    if (!f || f.size === 0) { emptyHit = true; continue; }
     if (f.size > MAX_UPLOAD_BYTES) { skipped = true; continue; }
     if (state.pendingFiles.length + accepted.length >= MAX_UPLOAD_FILES) { skipped = true; break; }
     accepted.push(f);
   }
+  if (emptyHit) showChanToast(t('upload.empty'), '', 'err');
   if (accepted.length === 0) {
-    if (skipped) showSystem(t('upload.tooLarge'));
+    if (skipped) showChanToast(t('upload.tooLarge'), '', 'err');
     return;
   }
   for (const f of accepted) {
@@ -1492,10 +1611,10 @@ async function addFiles(fileList) {
       insertPlaceholderInComposer(placeholderFor(entry));
       renderThumbStrip();
     } catch (e) {
-      showSystem(t('upload.failed') + ': ' + (e.message || e));
+      showChanToast(t('upload.failed'), e.message || String(e), 'err');
     }
   }
-  if (skipped) showSystem(t('upload.tooLarge'));
+  if (skipped) showChanToast(t('upload.tooLarge'), '', 'err');
 }
 
 if (uploadBtn && imgInput) uploadBtn.addEventListener('click', (e) => {
@@ -1598,8 +1717,11 @@ window.ga.onBridgeReady(async () => {
   await loadBridgeConfig();
   if (document.querySelector('.page[data-page="channels"].active')) renderChannelList(gaServiceStore.list());
   const sess = activeSess();
-  if (sess && sess.bridgeSessionId && !sess.messages.length) pollSession(sess);
+  if (sess && sess.bridgeSessionId && !sess.messages.length) await pollSession(sess);
+  delete document.documentElement.dataset.bootHasSessions;
+  if (sess) refreshEmptyState(sess);
 });
+setTimeout(() => { delete document.documentElement.dataset.bootHasSessions; }, 3000);
 window.ga.onBridgeNotification((msg) => {
   if (msg && msg.type === 'session-state') {
     for (const sess of state.sessions.values()) {
@@ -1657,11 +1779,11 @@ function modelPriceTip(model) {
   const cacheReadRate = isClaudeOrDS ? 0.1 : 0.5;
   const cacheWriteRate = isClaudeOrDS ? 1.25 : 1.0;
   const lines = [];
-  if (!known) lines.push(lang === 'zh' ? '⚠ 此模型计费规则尚未明确，按默认估算' : '⚠ Pricing not confirmed, using defaults');
-  lines.push((lang === 'zh' ? '输入: $' : 'Input: $') + p[0] + ' /M tokens');
-  lines.push((lang === 'zh' ? '输出: $' : 'Output: $') + p[1] + ' /M tokens');
-  lines.push((lang === 'zh' ? '缓存写入: $' : 'Cache write: $') + (p[0] * cacheWriteRate).toFixed(2) + ' /M tokens');
-  lines.push((lang === 'zh' ? '缓存读取: $' : 'Cache read: $') + (p[0] * cacheReadRate).toFixed(2) + ' /M tokens');
+  if (!known) lines.push(t('tok.pricingUnknown'));
+  lines.push(t('tok.priceInput') + p[0] + ' /M tokens');
+  lines.push(t('tok.priceOutput') + p[1] + ' /M tokens');
+  lines.push(t('tok.priceCacheW') + (p[0] * cacheWriteRate).toFixed(2) + ' /M tokens');
+  lines.push(t('tok.priceCacheR') + (p[0] * cacheReadRate).toFixed(2) + ' /M tokens');
   return lines.join('\n');
 }
 

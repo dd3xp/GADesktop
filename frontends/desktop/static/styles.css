@@ -65,6 +65,14 @@
   --switch-off:#cfd4de;
   --dot-idle:#c2c7d0;
 
+  /* —— 外观切换页的样本色（不跟随当前主题，固定为 light/dark 实际配色） —— */
+  --sample-light-bg:#f4f5f7;
+  --sample-light-panel:#ffffff;
+  --sample-light-line:#e9eaee;
+  --sample-dark-bg:#0d1117;
+  --sample-dark-panel:#161b22;
+  --sample-dark-line:#30363d;
+
   /* —— 阴影 / 遮罩 —— */
   --overlay:#14192861;
   --shadow:0 1px 2px #1419280a, 0 8px 24px #1419280d;
@@ -73,6 +81,17 @@
 
   --radius:12px; --radius-sm:8px;
   font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  /* —— 折叠块 —— */
+  --fold-thinking-border:#d4c090;
+  --fold-thinking-bg:#fefbf3;
+  --fold-tool-border:#90b8d4;
+  --fold-tool-bg:#f3f8fe;
+  --fold-result-border:#a0d4a0;
+  --fold-result-bg:#f4fdf4;
+  --fold-turn-border:var(--line);
+  --fold-turn-bg:var(--field-bg);
+  --fold-retry-border:var(--line-soft);
+  --fold-retry-bg:transparent;
 }
 
 /* —— 主题色板（素色：仅 accent 浅底）—— */
@@ -134,6 +153,13 @@ html[data-appearance="dark"]{
   --shadow:0 1px 2px #01040966, 0 8px 24px #01040966;
   --shadow-pop:0 8px 24px #01040999;
   --shadow-modal:0 18px 50px #010409cc;
+  /* —— 折叠块（dark 覆盖） —— */
+  --fold-thinking-border:#6b5b30;
+  --fold-thinking-bg:#2a2418;
+  --fold-tool-border:#3a5066;
+  --fold-tool-bg:#16202b;
+  --fold-result-border:#3f6647;
+  --fold-result-bg:#15241a;
 }
 html[data-appearance="dark"][data-theme]{
   --blue-bg:color-mix(in srgb, var(--blue) 22%, var(--panel));
@@ -207,19 +233,19 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; }
   position:relative; overflow:hidden;
 }
 .appear-preview-light{
-  background:linear-gradient(180deg, #f4f5f7 0%, #f4f5f7 42%, #ffffff 42%, #ffffff 100%);
+  background:linear-gradient(180deg, var(--sample-light-bg) 0%, var(--sample-light-bg) 42%, var(--sample-light-panel) 42%, var(--sample-light-panel) 100%);
 }
 .appear-preview-light::after{
   content:''; position:absolute; left:10%; top:52%; width:55%; height:7px;
-  border-radius:4px; background:#e9eaee;
+  border-radius:4px; background:var(--sample-light-line);
 }
 .appear-preview-dark{
-  background:linear-gradient(180deg, #0d1117 0%, #0d1117 42%, #161b22 42%, #161b22 100%);
-  border-color:#30363d;
+  background:linear-gradient(180deg, var(--sample-dark-bg) 0%, var(--sample-dark-bg) 42%, var(--sample-dark-panel) 42%, var(--sample-dark-panel) 100%);
+  border-color:var(--sample-dark-line);
 }
 .appear-preview-dark::after{
   content:''; position:absolute; left:10%; top:52%; width:55%; height:7px;
-  border-radius:4px; background:#30363d;
+  border-radius:4px; background:var(--sample-dark-line);
 }
 .appear-name{ font-size:12px; font-weight:600; color:var(--txt-2); }
 .appear-card.sel .appear-name{ color:var(--blue); }
@@ -427,7 +453,6 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
   background:var(--panel);
 }
 .tb-left{ display:flex; align-items:center; gap:14px; font-size:12px; }
-.tb-right{ display:flex; align-items:center; gap:6px; }
 .pill{
   border:1px solid var(--line); background:var(--card); border-radius:20px;
   padding:5px 12px; font-size:12px; color:var(--txt-2); cursor:pointer;
@@ -506,6 +531,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 
 /* 预设功能卡片（现在嵌在聊天空状态）*/
 .chat-start{ width:100%; max-width:560px; }
+html[data-boot-has-sessions] .chat-start{ display:none !important; }
 .feature-head{ text-align:center; margin-bottom:22px; }
 .feature-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
 .fcard{
@@ -572,7 +598,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 .chan-log-pre{
   max-height:360px; overflow:auto; margin:0;
   font-family:inherit; font-size:13px; line-height:1.5;
-  color:var(--txt-2); background:#ffffff;
+  color:var(--txt-2); background:var(--field-bg);
   border:1px solid var(--line); border-radius:var(--radius-sm);
   padding:14px 16px; white-space:pre-wrap; word-break:break-word;
 }
@@ -586,7 +612,7 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
   flex:1; min-height:420px; width:100%;
   padding:0; margin:0;
   font-family:inherit; font-size:13px; line-height:1.5;
-  color:var(--txt); background:#ffffff;
+  color:var(--txt); background:var(--card);
   border:none; border-radius:0; resize:vertical; outline:none;
 }
 .mykey-editor:focus{ outline:none; }
@@ -1035,3 +1061,44 @@ html[data-appearance="dark"] .swatch[data-theme="8"].sel::after{
 }
 .preset-restore:hover{ background:var(--hover-2); color:var(--blue); border-color:var(--blue); }
 .preset-restore[hidden]{ display:none; }
+
+/* ═══════════════ Markdown 渲染增强 (from PR) ═══════════════ */
+.fold-pre{ white-space:pre-wrap; word-break:break-word; max-height:300px; overflow:auto; }
+.fold.fold-thinking{ border-color:var(--fold-thinking-border); background:var(--fold-thinking-bg); }
+.fold.fold-tool{ border-color:var(--fold-tool-border); background:var(--fold-tool-bg); }
+.fold.fold-result{ border-color:var(--fold-result-border); background:var(--fold-result-bg); }
+.fold.fold-turn{ border-color:var(--fold-turn-border); background:var(--fold-turn-bg); }
+.fold.fold-turn > summary{ font-weight:600; color:var(--txt-2); }
+.fold.fold-retry{ border-color:var(--fold-retry-border); background:var(--fold-retry-bg); border-style:dashed; }
+.fold.fold-retry > summary{ font-size:11px; color:var(--muted2); font-weight:400; }
+.fold.fold-retry pre{ font-size:11px; color:var(--muted); }
+/* ---- 代码块容器 + 复制按钮 ---- */
+.bubble.md pre{ position:relative; background:var(--field-bg); border-radius:8px; padding:12px; overflow-x:auto; }
+.bubble.md pre code{ font-size:13px; }
+.code-copy-btn{
+  position:absolute; top:6px; right:6px; background:var(--bg); border:1px solid var(--line);
+  border-radius:6px; padding:2px 8px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .2s;
+}
+.bubble.md pre:hover .code-copy-btn{ opacity:1; }
+/* ---- KaTeX 公式 ---- */
+.katex-block{ display:block; text-align:center; margin:12px 0; overflow-x:auto; }
+.katex-inline{ display:inline; }
+.katex-block .katex{ font-size:1.1em; }
+.latex-copy-btn{
+  position:absolute; top:4px; right:4px; background:var(--bg); border:1px solid var(--line);
+  border-radius:6px; padding:1px 6px; font-size:10px; cursor:pointer; opacity:0; transition:opacity .2s;
+}
+.katex-block{ position:relative; }
+.katex-block:hover .latex-copy-btn{ opacity:1; }
+/* ---- highlight.js 适配 ---- */
+.hljs{ background:transparent !important; padding:0 !important; }
+/* ---- 打字机光标 ---- */
+.cursor-blink::after{
+  content:'▍'; animation:blink 1s step-end infinite; color:var(--blue);
+}
+@keyframes blink{ 50%{ opacity:0; } }
+/* —— 最后一轮 summary 弱化显示 —— */
+.turn-summary{
+  display:block; font-style:italic; color:var(--muted);
+  font-size:12px; margin-bottom:6px;
+}

@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <title>GenericAgent</title>
 <link rel="stylesheet" href="styles.css?v=10">
+<!-- KaTeX: LaTeX 公式渲染 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<!-- highlight.js: 代码高亮 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" crossorigin="anonymous">
 <!-- DEV 脚手架(标注模式)：删本行 + 下方 annot.js 一行即可彻底移除 -->
 <link rel="stylesheet" href="annot.css">
 <script>
@@ -20,6 +24,7 @@
   app=app||'light';
   document.documentElement.dataset.appearance=app;
   if(app==='light'&&localStorage.getItem('ga_plain')==='1') document.documentElement.dataset.plain='1';
+  try{ var sraw=localStorage.getItem('ga_sessions'); if(sraw && JSON.parse(sraw).length) document.documentElement.dataset.bootHasSessions='1'; }catch(_){}
 })();
 </script>
 </head>
@@ -88,11 +93,6 @@
             <i class="dot"></i> <span class="rs-label"></span>
           </button>
         </div>
-        <div class="tb-right">
-          <button class="ic-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          </button>
-        </div>
       </div>
 
       <div id="pages">
@@ -142,7 +142,6 @@
         <section class="page" data-page="channels">
           <div class="page-pad">
             <div class="page-title" data-i18n="page.channels.title"></div>
-            <div class="page-sub" data-i18n="page.channels.sub"></div>
             <div class="list" id="chan-list"></div>
             <div class="list-empty" id="chan-empty" hidden data-i18n="ch.empty"></div>
           </div>
@@ -152,7 +151,6 @@
         <section class="page" data-page="status">
           <div class="page-pad">
             <div class="page-title" data-i18n="page.status.title"></div>
-            <div class="page-sub" data-i18n="page.status.sub"></div>
             <div class="list" id="status-list"></div>
           </div>
         </section>
@@ -175,7 +173,6 @@
         <section class="page" data-page="token">
           <div class="page-pad">
             <div class="page-title" data-i18n="page.token.title"></div>
-            <div class="page-sub" data-i18n="page.token.sub"></div>
             <div class="tok-filter">
               <label data-i18n="tok.from"></label>
               <input type="datetime-local" id="tok-since">
@@ -418,7 +415,11 @@
 <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
 <script src="vendor/marked.min.js"></script>
-<script src="app.js?v=10"></script>
+<!-- KaTeX JS -->
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+<!-- highlight.js -->
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
+<script src="app.js?v=11"></script>
 <script src="annot.js"></script><!-- DEV 脚手架，可删 -->
 </body>
 </html>
