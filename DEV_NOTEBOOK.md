@@ -31,32 +31,70 @@
 ## Feature TODO（来自 PR#8 + main-3 笔记）
 来源单 commit `f96ca0f`，需逐项拆出，独立验证：
 
-- [ ] F1: SVG icon 统一（复制按钮等图标资源）
-- [ ] F2: bubble-copy-btn（消息气泡级复制按钮）
+- [x] **F4: IME 输入法兼容** ✅ commit `47b0488` (2026-05-24)
+- [x] **F1: SVG icon 复制按钮** ✅ commit `27e3480` (2026-05-24)
+- [x] **F5: assistant 气泡宽度固定 100%** ✅ commit 待填 (2026-05-24)
 - [ ] F3: 消息折叠（assistant turn collapsible）
-- [ ] F4: IME 输入法兼容（keyCode===229 / isComposing）
-- [ ] F5: assistant 气泡宽度固定 100%
+- [ ] F2: bubble-copy-btn（消息气泡级复制按钮）
 - [ ] F6: 智能滚动（frozen turns + live zone + isNearBottom 增量渲染）
 
-> 顺序由依赖与风险决定，待 plan.md 确定后写回这里。
+> 顺序由依赖与风险决定：F4(零依赖)→F1(零依赖)→F5(气泡布局)→F3(msg格式)→F2(依赖F1常量)→F6(高风险，最后)
 
-## CodeMemory 关联（待索引后填）
-- 索引项目名: 待 `index_repository` 后用 `list_projects` 查
-- 关键符号: `renderDraft`, `flushTypewriter`, `composer keydown`, ...
+## CodeMemory 关联（手工索引，每个feature后追加）
+
+### F5: assistant 气泡 width:100%
+- **改点**: `styles.css` L578 `.bubble.md` 规则追加 `width:100%`（保留既有 `max-width:100%`）
+- **触发面**: 所有用 `.bubble.md` 类的元素（grep 验证：仅 assistant md 气泡 + 流式渲染容器，user 默认 `.bubble`，user markdown 极少见）
+- **不动 JS**: 渲染逻辑不变
+- **风险**: user 若开启 markdown 显示，气泡也会撑满；当前 `renderUser` 未走 md 路径 → 安全
+- **变化半径**: 1 selector / 1 属性 / 1 行 / 0 硬编码
+
+### F4: IME 兼容
+- **改点**: `app.js` 唯一 keydown listener（绑定到 `inputEl`）
+- **影响调用**: `submitInput()`（保持原签名，仅条件加严）
+- **不影响**: `sendBtn.onclick`（97f613d stop 切换逻辑独立）
+- **不影响**: PR#5 `interruptBeforeSend / waitSessionIdle / setMsgLoading / setComposerLocked`
+- **风险面**: 0（仅在 Enter 触发条件加 2 个布尔判断）
+
+### F1: SVG 复制图标
+- **改点 1**: `app.js` L783-816 `postRenderEnhance()` —— 唯一定义点
+  - 新增模块级常量 `SVG_COPY_ICON` / `SVG_CHECK_ICON`（在 `postRenderEnhance` 上方）
+  - `code-copy-btn` 由 `textContent=t('act.copy')` → `innerHTML=SVG_COPY_ICON` + `title=t('act.copy')`
+  - `latex-copy-btn` 同上但用 `t('act.copyTex')`
+- **改点 2**: `styles.css` L1276+1285 两个按钮规则改写（含新 hover），用 var(--card)/(--line)/(--muted)/(--line-soft)/(--txt-2)
+- **调用面**: `postRenderEnhance` 仅在以下三处调用（grep验证）:
+  - `renderAssistant`（流式终态完整渲染）
+  - `flushTypewriter`（typewriter 收尾）
+  - `renderDraft`（draft → final 转换）
+  - 都只对 `.bubble.md` 容器作用 → 影响范围严格限定在 assistant md 气泡
+- **i18n 保留**: `act.copy / act.copied / act.copyTex` 三 key 仍被引用（title属性 + 提示文本），未删
+- **主题适配**: SVG 用 `currentColor` + CSS 变量 → light/dark 自动跟随
+- **不影响**: F2 待加的 `.bubble-copy-btn`（独立 class，未占用）
+- **风险面**: 中等→已通过手测覆盖 hover/dark/light/click/checkmark
+
+### 全局符号热点（后续 feature 必查）
+- `renderDraft` (app.js) — F6 重写目标，**修前必须** 检查 `flushTypewriter / setComposerLocked / cancelPrompt` 三处调用方
+- `.user-stack` (app.js + styles.css) — Q3 决定保留；F2/F5 不动它的容器结构
+- `cancelPrompt / interruptBeforeSend / sendBtn click` — Q1/Q2 决定保留；后续 feature **禁止** 触碰
+- `data-i18n` / `t()` — 任何文本 UI 必须走这两条路径，**禁止字面量**
 
 ## 决策日志
 - 2026-05-24 选定策略 A（干净重做），main-4 初始化为 git 仓库
 - 2026-05-24 拉取 `pr8-original` 作 diff 参考，**不直接 merge/cherry-pick**
+- 2026-05-24 Q1A: 保留 PR#5 打断逻辑；Q2A: 保留 97f613d busy→stop；Q3: 保留 .user-stack 容器
+- 2026-05-24 新bridge `BRIDGE_PORT=14169` 测试用，旧 14168 不动
+- 2026-05-24 F4/F1 完成，CSS hover 用 `--line-soft` 替代旧的 `--bg`（更温和）
 
 ## 避坑
 - main-3 失败模式：`git merge main` 时把 PR#5/#6 当旧代码"覆盖掉"，行级无冲突但语义回退
 - 解决：每个 feature 单独应用 + 上游保留功能逐项手测
-
-手测
+- F1 经验：PR#8 原版 styles.css 还包含了 F2 的 `.bubble-copy-btn` 样式，本次 F1 commit **未引入**，留给 F2
 
 ## 风险/不确定
-- F6 智能滚动改动最大（与 typewriter/streaming 强耦合），可能与 PR#9 字体大小、97f613d stop按钮交互
+- F5: `.bubble.md{ width:100% }` 可能让 user 端 markdown 气泡（少见）也撑满 → 待测
 - F3 折叠 UI 与 PR#6 图片气泡共存需测
+- F6 智能滚动改动最大（与 typewriter/streaming 强耦合），可能与 PR#9 字体大小、97f613d stop按钮交互
+
 
 ## 工作流（每个feature）
 1. read DEV_NOTEBOOK.md
