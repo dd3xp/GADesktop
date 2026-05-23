@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>GenericAgent</title>
-<link rel="stylesheet" href="styles.css?v=11">
+<link rel="stylesheet" href="styles.css?v=12">
 <!-- KaTeX: LaTeX 公式渲染 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 <!-- highlight.js: 代码高亮 -->
@@ -25,7 +25,16 @@
   app=app||'light';
   document.documentElement.dataset.appearance=app;
   if(app==='light'&&localStorage.getItem('ga_plain')==='1') document.documentElement.dataset.plain='1';
-  var fs=localStorage.getItem('ga_font_size'); if(fs==='sm'||fs==='lg'||fs==='md') document.documentElement.dataset.fontSize=fs;
+  var LEGACY_FONT={sm:12,md:14,lg:16};
+  function chatFontPx(v){
+    if(v&&LEGACY_FONT[v]) return LEGACY_FONT[v];
+    var n=parseInt(v,10); if(!isNaN(n)&&n>=10&&n<=20) return n;
+    return 14;
+  }
+  var fs=localStorage.getItem('ga_font_size');
+  var cfp=chatFontPx(fs);
+  document.documentElement.dataset.chatFont=String(cfp);
+  document.documentElement.style.setProperty('--chat-font',cfp+'px');
   var hljs=document.getElementById('hljs-theme');
   if(hljs&&app==='dark') hljs.href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css';
   try{ var sraw=localStorage.getItem('ga_sessions'); if(sraw && JSON.parse(sraw).length) document.documentElement.dataset.bootHasSessions='1'; }catch(_){}
@@ -384,11 +393,10 @@
           </div>
         </div>
         <div class="set-block">
-          <div class="set-sec-t" data-i18n="set.fontSize"></div>
-          <div class="seg-group font-size-seg" id="font-size-seg" role="radiogroup">
-            <button type="button" class="seg-opt" data-font-size="sm" role="radio" aria-checked="false" data-i18n="fontSize.sm"></button>
-            <button type="button" class="seg-opt" data-font-size="md" role="radio" aria-checked="true" data-i18n="fontSize.md"></button>
-            <button type="button" class="seg-opt" data-font-size="lg" role="radio" aria-checked="false" data-i18n="fontSize.lg"></button>
+          <div class="set-sec-t" id="chat-font-label" data-i18n="set.fontSize"></div>
+          <div class="chat-font-row">
+            <input type="range" class="chat-font-slider" id="chat-font-slider" min="10" max="20" step="1" value="14" aria-labelledby="chat-font-label">
+            <span class="chat-font-value" id="chat-font-value" aria-hidden="true">14px</span>
           </div>
         </div>
         <div class="set-block">
@@ -435,7 +443,7 @@
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <!-- highlight.js -->
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 <script src="annot.js"></script><!-- DEV 脚手架，可删 -->
 </body>
 </html>
