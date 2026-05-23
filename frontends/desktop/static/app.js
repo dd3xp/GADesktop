@@ -1059,14 +1059,21 @@ function msgNode(msg) {
 function renderAllMessages(sess) {
   const box = ensureMsgs(); box.innerHTML = '';
   for (const m of sess.messages) box.appendChild(msgNode(m));
-  refreshEmptyState(sess); scrollBottom();
+  refreshEmptyState(sess); scrollBottom(true);
 }
 function appendMessage(sess, msg) {
   if (!isActive(sess)) return;
   ensureMsgs().appendChild(msgNode(msg));
-  refreshEmptyState(sess); scrollBottom();
+  refreshEmptyState(sess); scrollBottom(true);
 }
-function scrollBottom() { requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; }); }
+function isNearBottom(threshold = 80) {
+  return msgArea.scrollHeight - msgArea.scrollTop - msgArea.clientHeight < threshold;
+}
+function scrollBottom(force) {
+  if (force || isNearBottom()) {
+    requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; });
+  }
+}
 /* ═══════════════ 打字机效果 (PR移植) ═══════════════ */
 const TW_SPEED = 12;  // 每 tick 显示字符数
 const TW_INTERVAL = 30; // ms
@@ -1089,15 +1096,26 @@ function renderDraft(sess) {
       }
       tw.shown = Math.min(tw.shown + TW_SPEED, cur.length);
       const visible = cur.slice(0, tw.shown);
-      r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
-      postRenderEnhance(r.draftEl.querySelector('.bubble'));
-      scrollBottom();
+      rewriteDraftBubble(r, visible);
     }, TW_INTERVAL);
   }
   const visible = (r.draftText || '').slice(0, tw.shown);
+  rewriteDraftBubble(r, visible);
+  refreshEmptyState(sess);
+}
+
+// 重写打字机气泡：先记 near + 保存 <details> open 态；innerHTML 替换后恢复 open；仅当原先贴底才滚
+function rewriteDraftBubble(r, visible) {
+  const wasNear = isNearBottom();
+  const openIdx = [];
+  if (r.draftEl) {
+    r.draftEl.querySelectorAll('details').forEach((d, i) => { if (d.open) openIdx.push(i); });
+  }
   r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
   postRenderEnhance(r.draftEl.querySelector('.bubble'));
-  refreshEmptyState(sess); scrollBottom();
+  const dets = r.draftEl.querySelectorAll('details');
+  openIdx.forEach(i => { if (dets[i]) dets[i].open = true; });
+  if (wasNear) scrollBottom(true);
 }
 
 function flushTypewriter(sess) {
