@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <title>GenericAgent</title>
-<link rel="stylesheet" href="styles.css?v=10">
+<link rel="stylesheet" href="styles.css?v=11">
 <!-- KaTeX: LaTeX 公式渲染 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 <!-- highlight.js: 代码高亮 -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" crossorigin="anonymous">
+<link id="hljs-theme" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" crossorigin="anonymous">
 <!-- DEV 脚手架(标注模式)：删本行 + 下方 annot.js 一行即可彻底移除 -->
 <link rel="stylesheet" href="annot.css">
 <script>
@@ -25,6 +25,9 @@
   app=app||'light';
   document.documentElement.dataset.appearance=app;
   if(app==='light'&&localStorage.getItem('ga_plain')==='1') document.documentElement.dataset.plain='1';
+  var fs=localStorage.getItem('ga_font_size'); if(fs==='sm'||fs==='lg'||fs==='md') document.documentElement.dataset.fontSize=fs;
+  var hljs=document.getElementById('hljs-theme');
+  if(hljs&&app==='dark') hljs.href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css';
   try{ var sraw=localStorage.getItem('ga_sessions'); if(sraw && JSON.parse(sraw).length) document.documentElement.dataset.bootHasSessions='1'; }catch(_){}
 })();
 </script>
@@ -381,6 +384,14 @@
           </div>
         </div>
         <div class="set-block">
+          <div class="set-sec-t" data-i18n="set.fontSize"></div>
+          <div class="seg-group font-size-seg" id="font-size-seg" role="radiogroup">
+            <button type="button" class="seg-opt" data-font-size="sm" role="radio" aria-checked="false" data-i18n="fontSize.sm"></button>
+            <button type="button" class="seg-opt" data-font-size="md" role="radio" aria-checked="true" data-i18n="fontSize.md"></button>
+            <button type="button" class="seg-opt" data-font-size="lg" role="radio" aria-checked="false" data-i18n="fontSize.lg"></button>
+          </div>
+        </div>
+        <div class="set-block">
           <div class="set-sec-t" data-i18n="set.theme"></div>
           <div class="color-grid" id="theme-swatches">
             <span class="swatch sel" data-theme="1" role="button" tabindex="0" aria-label="1"></span>
@@ -424,7 +435,7 @@
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <!-- highlight.js -->
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js" crossorigin="anonymous"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 <script src="annot.js"></script><!-- DEV 脚手架，可删 -->
 </body>
 </html>

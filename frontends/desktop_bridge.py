@@ -959,7 +959,7 @@ async def status_handler(request):
 
 
 _SETTINGS = Path.home() / ".ga_desktop_settings.json"
-_UI_KEYS = ("lang", "theme", "appearance", "plain", "llmNo")
+_UI_KEYS = ("lang", "theme", "appearance", "plain", "llmNo", "fontSize")
 
 
 def _desktop_ui() -> dict:

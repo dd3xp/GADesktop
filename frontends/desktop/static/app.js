@@ -241,7 +241,8 @@ const I18N = {
     'customPreset.empty': '标题和 Prompt 不能为空',
     'customPreset.removeTitle': '删除',
     'builtinPreset.restoreBtn': '恢复默认预设',
-    'set.appearance': '外观', 'set.plainUi': '素色', 'set.theme': '颜色', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型',
+    'set.appearance': '外观', 'set.plainUi': '素色', 'set.fontSize': '字体大小', 'set.theme': '颜色', 'set.lang': '语言', 'set.model': '模型', 'set.addModel': '添加模型',
+    'fontSize.sm': '小', 'fontSize.md': '中', 'fontSize.lg': '大',
     'appearance.light': '浅色', 'appearance.dark': '深色',
     'set.noModels': '暂无模型，点击下方添加',
     'lang.zh': '简体中文', 'lang.en': 'English',
@@ -337,7 +338,8 @@ const I18N = {
     'customPreset.empty': 'Title and Prompt cannot be empty',
     'customPreset.removeTitle': 'Delete',
     'builtinPreset.restoreBtn': 'Restore defaults',
-    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.theme': 'Color', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model',
+    'set.appearance': 'Appearance', 'set.plainUi': 'Plain', 'set.fontSize': 'Font size', 'set.theme': 'Color', 'set.lang': 'Language', 'set.model': 'Model', 'set.addModel': 'Add model',
+    'fontSize.sm': 'Small', 'fontSize.md': 'Medium', 'fontSize.lg': 'Large',
     'appearance.light': 'Light', 'appearance.dark': 'Dark',
     'set.noModels': 'No models yet — add one below',
     'lang.zh': '简体中文', 'lang.en': 'English',
@@ -411,25 +413,37 @@ const I18N = {
   },
 };
 const LANGS = ['zh', 'en'];
-const STORE = { lang: 'ga_lang', theme: 'ga_theme', appearance: 'ga_appearance', plain: 'ga_plain', llmNo: 'ga_llm_no', sessions: 'ga_sessions', activeId: 'ga_active_id' };
+const STORE = { lang: 'ga_lang', theme: 'ga_theme', appearance: 'ga_appearance', plain: 'ga_plain', fontSize: 'ga_font_size', llmNo: 'ga_llm_no', sessions: 'ga_sessions', activeId: 'ga_active_id' };
 const APPEARANCE_IDS = ['light', 'dark'];
+const FONT_SIZES = ['sm', 'md', 'lg'];
+const HLJS_THEME_BASE = 'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/';
 
 function bootUiFromDom() {
   const root = document.documentElement;
-  const out = { lang: 'zh', theme: '1', appearance: 'light', plainUi: false };
+  const out = { lang: 'zh', theme: '1', appearance: 'light', plainUi: false, fontSize: 'md' };
   if (root.lang === 'en') out.lang = 'en';
   if (root.dataset.theme) out.theme = root.dataset.theme;
   if (APPEARANCE_IDS.includes(root.dataset.appearance)) out.appearance = root.dataset.appearance;
   if (out.appearance === 'light' && root.dataset.plain === '1') out.plainUi = true;
+  if (FONT_SIZES.includes(root.dataset.fontSize)) out.fontSize = root.dataset.fontSize;
   return out;
 }
-let { lang, theme, appearance, plainUi } = bootUiFromDom();
+let { lang, theme, appearance, plainUi, fontSize } = bootUiFromDom();
+
+function syncHljsTheme() {
+  const link = document.getElementById('hljs-theme');
+  if (link) link.href = HLJS_THEME_BASE + (appearance === 'dark' ? 'github-dark.min.css' : 'github.min.css');
+  document.querySelectorAll('.bubble.md pre code').forEach(block => {
+    if (typeof hljs !== 'undefined') hljs.highlightElement(block);
+  });
+}
 
 /** 服务端 ui 落盘后的本地镜像，仅供 index.html 内联脚本首帧防闪；不是真相源。 */
 function syncBootCache() {
   localStorage.setItem(STORE.lang, lang);
   localStorage.setItem(STORE.theme, theme);
   localStorage.setItem(STORE.appearance, appearance);
+  localStorage.setItem(STORE.fontSize, fontSize);
   if (plainUi) localStorage.setItem(STORE.plain, '1');
   else localStorage.removeItem(STORE.plain);
   localStorage.setItem(STORE.llmNo, String(state.llmNo));
@@ -437,7 +451,7 @@ function syncBootCache() {
 async function persistUiPrefs() {
   try {
     await window.ga.saveConfig({
-      config: { lang, theme, appearance, plain: plainUi, llmNo: state.llmNo },
+      config: { lang, theme, appearance, plain: plainUi, llmNo: state.llmNo, fontSize },
     });
     syncBootCache();
   } catch (_) {}
@@ -502,6 +516,16 @@ function selectLang(code) {
   if (document.querySelector('.page[data-page="status"].active')) loadStatusPanel();
   void persistUiPrefs();
 }
+function applyFontSize(size, { persist } = { persist: true }) {
+  fontSize = FONT_SIZES.includes(size) ? size : 'md';
+  document.documentElement.dataset.fontSize = fontSize;
+  document.querySelectorAll('#font-size-seg .seg-opt').forEach(el => {
+    const on = el.dataset.fontSize === fontSize;
+    el.classList.toggle('sel', on);
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  if (persist) void persistUiPrefs();
+}
 function applyTheme(id, { persist } = { persist: true }) {
   const n = parseInt(id, 10);
   theme = (n >= 1 && n <= 8) ? String(n) : '1';
@@ -534,6 +558,7 @@ function applyAppearance(nextApp, nextPlain, { persist } = { persist: true }) {
     el.setAttribute('aria-checked', on ? 'true' : 'false');
   });
   syncPlainSwitch();
+  syncHljsTheme();
   if (persist) void persistUiPrefs();
 }
 
@@ -1432,6 +1457,7 @@ function openSettings() {
   renderLangList();
   applyTheme(theme, { persist: false });
   applyAppearance(appearance, plainUi, { persist: false });
+  applyFontSize(fontSize, { persist: false });
 }
 async function loadModelProfiles() {
   try {
@@ -1517,6 +1543,12 @@ const plainUiSwitch = document.getElementById('plain-ui-switch');
 if (plainUiSwitch) plainUiSwitch.addEventListener('click', () => {
   if (appearance === 'light') applyAppearance('light', !plainUi);
 });
+const fontSizeSeg = document.getElementById('font-size-seg');
+if (fontSizeSeg) fontSizeSeg.addEventListener('click', (e) => {
+  const btn = e.target.closest('.seg-opt[data-font-size]');
+  if (!btn) return;
+  applyFontSize(btn.dataset.fontSize);
+});
 async function loadBridgeConfig() {
   try {
     const res = await window.ga.getConfig();
@@ -1527,6 +1559,7 @@ async function loadBridgeConfig() {
     }
     if (cfg.theme != null) applyTheme(cfg.theme, { persist: false });
     if (cfg.appearance) applyAppearance(cfg.appearance, !!cfg.plain, { persist: false });
+    if (FONT_SIZES.includes(cfg.fontSize)) applyFontSize(cfg.fontSize, { persist: false });
     if (cfg.llmNo != null && state.modelProfiles.length) {
       const p = state.modelProfiles.find(x => (x.id ?? 0) === cfg.llmNo);
       if (p) {
@@ -2515,6 +2548,8 @@ if (chanListEl) {
 loadSessions();
 applyAppearance(appearance, plainUi, { persist: false });
 applyTheme(theme, { persist: false });
+applyFontSize(fontSize, { persist: false });
+syncHljsTheme();
 state.planMode = localStorage.getItem('ga_plan') === '1';
 state.autoMode = localStorage.getItem('ga_auto') === '1';
 if (state.planMode && state.autoMode) {
