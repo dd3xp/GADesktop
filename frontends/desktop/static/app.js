@@ -781,6 +781,10 @@ function renderAssistant(text) {
   return html;
 }
 /* ═══════════════ 渲染后增强 (PR移植) ═══════════════ */
+/* ───────────── 统一复制 SVG Icon ───────────── */
+const SVG_COPY_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
 function postRenderEnhance(containerEl) {
   if (!containerEl) return;
   // 代码高亮 + 复制按钮
@@ -788,10 +792,11 @@ function postRenderEnhance(containerEl) {
     if (typeof hljs !== 'undefined') hljs.highlightElement(block);
     if (!block.parentElement.querySelector('.code-copy-btn')) {
       const btn = document.createElement('button');
-      btn.className = 'code-copy-btn'; btn.textContent = t('act.copy');
+      btn.className = 'code-copy-btn'; btn.innerHTML = SVG_COPY_ICON;
+      btn.title = t('act.copy');
       btn.onclick = () => {
         navigator.clipboard.writeText(block.textContent).then(() => {
-          btn.textContent = t('act.copied'); setTimeout(() => btn.textContent = t('act.copy'), 1500);
+          btn.innerHTML = SVG_CHECK_ICON; setTimeout(() => btn.innerHTML = SVG_COPY_ICON, 1500);
         });
       };
       block.parentElement.style.position = 'relative';
@@ -804,10 +809,11 @@ function postRenderEnhance(containerEl) {
     const src = el.querySelector('annotation[encoding="application/x-tex"]');
     if (!src) return;
     const btn = document.createElement('button');
-    btn.className = 'latex-copy-btn'; btn.textContent = t('act.copyTex');
+    btn.className = 'latex-copy-btn'; btn.innerHTML = SVG_COPY_ICON;
+    btn.title = t('act.copyTex');
     btn.onclick = () => {
       navigator.clipboard.writeText(src.textContent).then(() => {
-        btn.textContent = '✓'; setTimeout(() => btn.textContent = t('act.copyTex'), 1500);
+        btn.innerHTML = SVG_CHECK_ICON; setTimeout(() => btn.innerHTML = SVG_COPY_ICON, 1500);
       });
     };
     el.style.position = 'relative';

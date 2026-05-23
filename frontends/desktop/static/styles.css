@@ -1274,20 +1274,30 @@ html[data-boot-has-sessions] .chat-start{ display:none !important; }
 .bubble.md pre{ position:relative; background:var(--field-bg); border-radius:8px; padding:12px; overflow-x:auto; }
 .bubble.md pre code{ font-size:.92em; }
 .code-copy-btn{
-  position:absolute; top:6px; right:6px; background:var(--bg); border:1px solid var(--line);
-  border-radius:6px; padding:2px 8px; font-size:11px; cursor:pointer; opacity:0; transition:opacity .2s;
+  position:absolute; top:6px; right:6px; z-index:1;
+  border:1px solid var(--line); background:var(--card); color:var(--muted);
+  border-radius:6px; padding:4px; font-size:0; cursor:pointer;
+  opacity:0; transition:opacity .15s, background .12s;
+  display:flex; align-items:center; justify-content:center;
 }
 .bubble.md pre:hover .code-copy-btn{ opacity:1; }
+.code-copy-btn:hover{ background:var(--line-soft); color:var(--txt-2); }
+.code-copy-btn svg{ width:14px; height:14px; }
 /* ---- KaTeX 公式 ---- */
 .katex-block{ display:block; text-align:center; margin:12px 0; overflow-x:auto; }
 .katex-inline{ display:inline; }
 .katex-block .katex{ font-size:1.1em; }
 .latex-copy-btn{
-  position:absolute; top:4px; right:4px; background:var(--bg); border:1px solid var(--line);
-  border-radius:6px; padding:1px 6px; font-size:10px; cursor:pointer; opacity:0; transition:opacity .2s;
+  position:absolute; top:4px; right:4px; z-index:1;
+  border:1px solid var(--line); background:var(--card); color:var(--muted);
+  border-radius:6px; padding:4px; font-size:0; cursor:pointer;
+  opacity:0; transition:opacity .15s, background .12s;
+  display:flex; align-items:center; justify-content:center;
 }
 .katex-block{ position:relative; }
 .katex-block:hover .latex-copy-btn{ opacity:1; }
+.latex-copy-btn:hover{ background:var(--line-soft); color:var(--txt-2); }
+.latex-copy-btn svg{ width:14px; height:14px; }
 /* ---- highlight.js 适配 ---- */
 .hljs{ background:transparent !important; padding:0 !important; }
 html[data-appearance="dark"] .bubble.md{
