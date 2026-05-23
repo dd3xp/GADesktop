@@ -264,9 +264,6 @@ const I18N = {
     'status.disconnected': '未连接', 'status.stopped': '已停止', 'status.idle': '空闲',
     'conv.emptyList': '暂无会话，点「＋ 新对话」开始', 'conv.defaultTitle': '新对话',
     'err.bridge': 'bridge 未连接', 'err.newSession': '新建会话失败', 'err.poll': '轮询失败', 'err.stop': '停止失败',
-    'err.interruptTimeout': '等待上一轮停止超时，请稍后再试',
-    'sys.interruptPrev.hint': '已停止上一轮，正在处理新消息',
-    'chat.interrupting': '正在停止上一轮…',
     'sys.stopRequested': '已请求停止',
     'slash.help': '可用命令：\n/new 新会话  /clear 清屏  /stop 停止  /settings 设置',
     'slash.unknown': '未知命令',
@@ -287,6 +284,7 @@ const I18N = {
     'upload.dropHint': '松开以上传文件',
     'lightbox.closeTitle': '关闭',
     'fold.thinking': '思考', 'fold.tool': '工具调用', 'fold.toolResult': '工具结果', 'fold.llm': 'LLM Running',
+    'fold.turn': 'Turn', 'fold.retry': '重试',
     'model.auto': '自动选择',
     'model.menuLabel': '选择模型',
     'chip.plan': 'Plan',
@@ -369,9 +367,6 @@ const I18N = {
     'status.disconnected': 'Disconnected', 'status.stopped': 'Stopped', 'status.idle': 'Idle',
     'conv.emptyList': 'No chats yet — click “＋ New chat”', 'conv.defaultTitle': 'New chat',
     'err.bridge': 'Bridge not connected', 'err.newSession': 'Failed to create session', 'err.poll': 'Polling failed', 'err.stop': 'Stop failed',
-    'err.interruptTimeout': 'Timed out waiting for the previous reply to stop — try again',
-    'sys.interruptPrev.hint': 'Previous reply stopped — processing new message',
-    'chat.interrupting': 'Stopping previous reply…',
     'sys.stopRequested': 'Stop requested',
     'slash.help': 'Commands:\n/new new chat  /clear clear  /stop stop  /settings settings',
     'slash.unknown': 'Unknown command',
@@ -392,6 +387,7 @@ const I18N = {
     'upload.dropHint': 'Drop to upload files',
     'lightbox.closeTitle': 'Close',
     'fold.thinking': 'Thinking', 'fold.tool': 'Tool call', 'fold.toolResult': 'Tool result', 'fold.llm': 'LLM Running',
+    'fold.turn': 'Turn', 'fold.retry': 'Retry',
     'model.auto': 'Auto',
     'model.menuLabel': 'Select model',
     'chip.plan': 'Plan',
@@ -767,17 +763,89 @@ function renderMarkdown(text) {
 }
 function renderAssistant(text) {
   let s = String(text || '');
+
+  // Turn级折叠：按 "LLM Running (Turn N)" 分割
+  const turnSep = /\**LLM Running \(Turn \d+\) \.\.\.\**/g;
+  const turnParts = s.split(turnSep);
+  const turnMarkers = s.match(turnSep) || [];
+
+  if (turnMarkers.length > 0) {
+    const segments = [];
+    for (let i = 0; i < turnMarkers.length; i++) {
+      const content = turnParts[i + 1] || '';
+      const isLast = (i === turnMarkers.length - 1);
+      if (isLast) {
+        segments.push(foldBlocks(content, true));
+      } else {
+        const sumMatch = content.match(/<summary>([\s\S]*?)<\/summary>/i);
+        let title;
+        if (sumMatch) {
+          title = `${t('fold.turn')} ${i + 1} \u00b7 ${sumMatch[1].trim().slice(0, 50)}`;
+        } else {
+          const toolMatch = content.match(/Tool:\s*`([^`]+)`/);
+          title = toolMatch
+            ? `${t('fold.turn')} ${i + 1} \u00b7 ${toolMatch[1]}`
+            : `${t('fold.turn')} ${i + 1}`;
+        }
+        const body = foldBlocks(content, false);
+        segments.push(
+          `<details class="fold fold-turn"><summary>${escapeHtml(title)}</summary><div class="fold-body">${body}</div></details>`
+        );
+      }
+    }
+    const preamble = turnParts[0].trim();
+    if (preamble) return foldBlocks(preamble, true) + segments.join('');
+    return segments.join('');
+  }
+
+  return foldBlocks(s, true);
+}
+
+// 块级折叠：thinking / tool_call / tool_result
+function foldBlocks(text, isLastTurn) {
+  let s = String(text || '');
   const folds = [];
-  const stash = (label, body, cls) => { folds.push({ label, body, cls: cls || '' }); return ` F${folds.length - 1} `; };
-  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi, m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
-  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, m => stash(t('fold.tool'), m, 'fold-tool'));
-  s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi, m => stash(t('fold.toolResult'), m, 'fold-result'));
-  s = s.replace(/(\**LLM Running \(Turn \d+\) \.\.\.\**)/g, m => stash(t('fold.llm'), m, 'fold-turn'));
+  const stash = (label, body, cls) => {
+    folds.push({ label, body, cls: cls || '' });
+    return `<!--FOLD:${folds.length - 1}-->`;
+  };
+
+  // 1) thinking块
+  s = s.replace(/<thinking>[\s\S]*?<\/thinking>/gi,
+    m => stash(t('fold.thinking'), m.replace(/<\/?thinking>/gi, ''), 'fold-thinking'));
+
+  // 2) 工具结果：5反引号块
+  s = s.replace(/`````\n([\s\S]*?)\n`````/g,
+    (_, body) => stash(t('fold.toolResult'), body.trim(), 'fold-result'));
+
+  // 3) 工具调用：🛠️ Tool: `name` ... ````text\n...\n````
+  s = s.replace(/🛠️\s*Tool:\s*`([^`]+)`[^\n]*\n````[^\n]*\n([\s\S]*?)````/g,
+    (_, name, body) => {
+      const label = name ? `${t('fold.tool')}: ${name}` : t('fold.tool');
+      return stash(label, body.trim(), 'fold-tool');
+    });
+
+  // 4) <function_calls>/<function_results> 块
+  s = s.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi,
+    m => stash(t('fold.tool'), m, 'fold-tool'));
+  s = s.replace(/<function_results>[\s\S]*?<\/function_results>/gi,
+    m => stash(t('fold.toolResult'), m, 'fold-result'));
+
+  // 5) <summary>处理
+  if (isLastTurn) {
+    s = s.replace(/<summary>([\s\S]*?)<\/summary>/gi, (_, inner) => {
+      return `<span class="turn-summary">${inner.trim()}</span>\n\n`;
+    });
+  }
+  s = s.replace(/<\/?summary>/gi, '');
+
   let html = renderMarkdown(s);
-  html = html.replace(/F(\d+)/g, (_, i) => {
+
+  html = html.replace(/<!--FOLD:(\d+)-->/g, (_, i) => {
     const f = folds[Number(i)];
-    return `<details class="fold ${f.cls || ''}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
+    return `<details class="fold ${f.cls}"><summary>${escapeHtml(f.label)}</summary><pre class="fold-pre">${escapeHtml(f.body)}</pre></details>`;
   });
+
   return html;
 }
 /* ═══════════════ 渲染后增强 (PR移植) ═══════════════ */
@@ -788,10 +856,10 @@ function postRenderEnhance(containerEl) {
     if (typeof hljs !== 'undefined') hljs.highlightElement(block);
     if (!block.parentElement.querySelector('.code-copy-btn')) {
       const btn = document.createElement('button');
-      btn.className = 'code-copy-btn'; btn.textContent = t('act.copy');
+      btn.className = 'code-copy-btn'; btn.innerHTML = SVG_COPY_ICON;
       btn.onclick = () => {
         navigator.clipboard.writeText(block.textContent).then(() => {
-          btn.textContent = t('act.copied'); setTimeout(() => btn.textContent = t('act.copy'), 1500);
+          btn.innerHTML = SVG_CHECK_ICON; setTimeout(() => btn.innerHTML = SVG_COPY_ICON, 1500);
         });
       };
       block.parentElement.style.position = 'relative';
@@ -804,10 +872,10 @@ function postRenderEnhance(containerEl) {
     const src = el.querySelector('annotation[encoding="application/x-tex"]');
     if (!src) return;
     const btn = document.createElement('button');
-    btn.className = 'latex-copy-btn'; btn.textContent = t('act.copyTex');
+    btn.className = 'latex-copy-btn'; btn.innerHTML = SVG_COPY_ICON;
     btn.onclick = () => {
       navigator.clipboard.writeText(src.textContent).then(() => {
-        btn.textContent = '✓'; setTimeout(() => btn.textContent = t('act.copyTex'), 1500);
+        btn.innerHTML = SVG_CHECK_ICON; setTimeout(() => btn.innerHTML = SVG_COPY_ICON, 1500);
       });
     };
     el.style.position = 'relative';
@@ -864,11 +932,7 @@ const chatPage   = document.querySelector('.page[data-page="chat"]');
 const msgArea    = chatPage.querySelector('.msg-area');
 const chatStart  = msgArea.querySelector('.chat-start');
 const inputEl    = chatPage.querySelector('.input');
-const sendBtn    = document.getElementById('send-btn');
-const composerEl = chatPage.querySelector('.composer');
-const msgLoading = document.getElementById('msg-loading');
-const MIN_MSG_LOADING_MS = 450;
-let _submitInFlight = false;
+const sendBtn    = chatPage.querySelector('.send');
 const runToggle  = document.getElementById('run-toggle');
 const runLabel   = runToggle.querySelector('.rs-label');
 const convListEl = document.querySelector('.conv-list');
@@ -917,11 +981,7 @@ const modelNameEl= modelChip ? modelChip.querySelector('.model-name') : null;
 
 let msgsEl = null;
 function ensureMsgs() {
-  if (!msgsEl) {
-    msgsEl = document.createElement('div');
-    msgsEl.className = 'msgs';
-    msgArea.insertBefore(msgsEl, msgLoading || null);
-  }
+  if (!msgsEl) { msgsEl = document.createElement('div'); msgsEl.className = 'msgs'; msgArea.appendChild(msgsEl); }
   return msgsEl;
 }
 function refreshEmptyState(sess) {
@@ -955,24 +1015,6 @@ function fileSubLabel(name) {
   if (videoExts.includes(ext)) return t('file.kindVideo');
   return ext.toUpperCase();
 }
-function msgNode(msg) {
-  const el = document.createElement('div');
-  el.className = 'msg ' + (msg.role || 'system');
-  if (msg.role === 'user') {
-    const shown = (typeof msg.display === 'string' && msg.display.length) ? msg.display : msg.content;
-    const imgsHtml = (msg.images && msg.images.length)
-      ? `<div class="user-imgs">${msg.images.map(im => `<img src="${im.dataUrl}" alt="">`).join('')}</div>`
-      : '';
-    const filesHtml = (msg.files && msg.files.length)
-      ? `<div class="user-files">${msg.files.map(f => {
-          const name = f.name || 'file';
-          const sub = fileSubLabel(name);
-          return `<div class="file-chip" data-path="${escapeHtml(f.path || '')}" data-name="${escapeHtml(name)}"><span class="fc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span class="fc-meta"><span class="fc-name">${escapeHtml(name)}</span><span class="fc-sub">${escapeHtml(sub)}</span></span></div>`;
-        }).join('')}</div>`
-      : '';
-    const cleanText = stripAttachPlaceholders(shown);
-    const textHtml = cleanText ? `<div class="bubble">${escapeHtml(cleanText)}</div>` : '';
-    el.innerHTML = `<div class="user-stack">${filesHtml}${imgsHtml}${textHtml}</div>`;
   }
   else if (msg.role === 'assistant') {
     const body = msg.stopped ? (msg.content + '\n\n_[' + t('status.stopped') + ']_') : msg.content;
@@ -981,49 +1023,149 @@ function msgNode(msg) {
   }
   else if (msg.role === 'error') el.innerHTML = `<div class="bubble err">${escapeHtml(msg.content)}</div>`;
   else el.innerHTML = `<div class="bubble sys">${escapeHtml(msg.content)}</div>`;
+  // ── bubble 复制按钮（user / assistant）──
+  if (msg.role === 'user' || msg.role === 'assistant') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'bubble-copy-btn';
+    copyBtn.innerHTML = SVG_COPY_ICON;
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      let text;
+      if (msg.role === 'user') {
+        text = msg.content;
+      } else {
+        // assistant: 只复制最后一轮内容，排除<summary>
+        const raw = msg.content || '';
+        const parts = raw.split(TURN_SEP_RE);
+        const last = parts[parts.length - 1] || '';
+        text = last.replace(/<summary>[\s\S]*?<\/summary>/gi, '').trim();
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = SVG_CHECK_ICON;
+        setTimeout(() => { copyBtn.innerHTML = SVG_COPY_ICON; }, 1500);
+      });
+    });
+    el.appendChild(copyBtn);
+  }
   return el;
 }
 function renderAllMessages(sess) {
   const box = ensureMsgs(); box.innerHTML = '';
   for (const m of sess.messages) box.appendChild(msgNode(m));
-  refreshEmptyState(sess); scrollBottom();
+  refreshEmptyState(sess); scrollBottom(true);
 }
 function appendMessage(sess, msg) {
   if (!isActive(sess)) return;
   ensureMsgs().appendChild(msgNode(msg));
-  refreshEmptyState(sess); scrollBottom();
+  refreshEmptyState(sess); scrollBottom(true);
 }
-function scrollBottom() { requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; }); }
-/* ═══════════════ 打字机效果 (PR移植) ═══════════════ */
+function isNearBottom(threshold = 80) {
+  return msgArea.scrollHeight - msgArea.scrollTop - msgArea.clientHeight < threshold;
+}
+function scrollBottom(force) {
+  if (force || isNearBottom()) {
+    requestAnimationFrame(() => { msgArea.scrollTop = msgArea.scrollHeight; });
+  }
+}
+/* ═══════════════ 打字机效果 + 增量渲染 (PR移植) ═══════════════ */
 const TW_SPEED = 12;  // 每 tick 显示字符数
 const TW_INTERVAL = 30; // ms
+const TURN_SEP_RE = /\**LLM Running \(Turn \d+\) \.\.\.\**/g;
+
+/* ───────────── 统一复制 SVG Icon ───────────── */
+const SVG_COPY_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
 function renderDraft(sess) {
   const r = rt(sess);
   if (!isActive(sess)) return;
   const box = ensureMsgs();
   if (!r.draftEl || r.draftEl.parentNode !== box) {
-    r.draftEl = document.createElement('div'); r.draftEl.className = 'msg assistant'; box.appendChild(r.draftEl);
+    r.draftEl = document.createElement('div');
+    r.draftEl.className = 'msg assistant';
+    box.appendChild(r.draftEl);
+    r._renderedTurnCount = 0;
   }
+
+  // 按turn分割内容
+  const text = String(r.draftText || '');
+  const turnParts = text.split(TURN_SEP_RE);
+  const turnMarkers = text.match(TURN_SEP_RE) || [];
+  const totalTurns = turnMarkers.length;
+
+  // 确保bubble容器存在
+  let bubble = r.draftEl.querySelector('.bubble.md');
+  if (!bubble) {
+    bubble = document.createElement('div');
+    bubble.className = 'bubble md';
+    r.draftEl.appendChild(bubble);
+    r._renderedTurnCount = 0;
+  }
+
+  // 增量渲染：只追加新完成的历史turn，不重写已有的（保持折叠展开状态）
+  const completedTurns = Math.max(0, totalTurns - 1);
+  if (completedTurns > r._renderedTurnCount) {
+    for (let i = r._renderedTurnCount; i < completedTurns; i++) {
+      const turnDiv = document.createElement('div');
+      turnDiv.className = 'draft-turn-frozen';
+      const turnContent = turnParts[i + 1] || '';
+      const sumMatch = turnContent.match(/<summary>([\s\S]*?)<\/summary>/i);
+      let title;
+      if (sumMatch) {
+        title = `${t('fold.turn')} ${i + 1} \u00b7 ${sumMatch[1].trim().slice(0, 50)}`;
+      } else {
+        const toolMatch = turnContent.match(/Tool:\s*`([^`]+)`/);
+        title = toolMatch
+          ? `${t('fold.turn')} ${i + 1} \u00b7 ${toolMatch[1]}`
+          : `${t('fold.turn')} ${i + 1}`;
+      }
+      const body = foldBlocks(turnContent, false);
+      turnDiv.innerHTML = `<details class="fold fold-turn"><summary>${escapeHtml(title)}</summary><div class="fold-body">${body}</div></details>`;
+      const liveZone = bubble.querySelector('.draft-live-zone');
+      if (liveZone) {
+        bubble.insertBefore(turnDiv, liveZone);
+      } else {
+        bubble.appendChild(turnDiv);
+      }
+      postRenderEnhance(turnDiv);
+    }
+    r._renderedTurnCount = completedTurns;
+  }
+
+  // 活跃区：只重写最后一段（正在生成的内容）
+  let liveZone = bubble.querySelector('.draft-live-zone');
+  if (!liveZone) {
+    liveZone = document.createElement('div');
+    liveZone.className = 'draft-live-zone';
+    bubble.appendChild(liveZone);
+  }
+  const lastPart = turnParts[turnParts.length - 1] || '';
+
+  // Typewriter状态
   if (!r.twState) r.twState = { shown: 0, timer: null };
   const tw = r.twState;
   if (!tw.timer) {
     tw.timer = setInterval(() => {
-      const cur = r.draftText || '';
+      const curText = String(r.draftText || '');
+      const curParts = curText.split(TURN_SEP_RE);
+      const cur = curParts[curParts.length - 1] || '';
       if (tw.shown >= cur.length) {
         clearInterval(tw.timer); tw.timer = null;
         return;
       }
       tw.shown = Math.min(tw.shown + TW_SPEED, cur.length);
       const visible = cur.slice(0, tw.shown);
-      r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
-      postRenderEnhance(r.draftEl.querySelector('.bubble'));
+      const lz = bubble.querySelector('.draft-live-zone');
+      if (lz) {
+        lz.innerHTML = foldBlocks(visible, true) + '<span class="cursor"></span>';
+        postRenderEnhance(lz);
+      }
       scrollBottom();
     }, TW_INTERVAL);
   }
-  const visible = (r.draftText || '').slice(0, tw.shown);
-  r.draftEl.innerHTML = `<div class="bubble md">${renderAssistant(visible)}<span class="cursor"></span></div>`;
-  postRenderEnhance(r.draftEl.querySelector('.bubble'));
+  const visible = lastPart.slice(0, tw.shown);
+  liveZone.innerHTML = foldBlocks(visible, true) + '<span class="cursor"></span>';
+  postRenderEnhance(liveZone);
   refreshEmptyState(sess); scrollBottom();
 }
 
@@ -1033,6 +1175,7 @@ function flushTypewriter(sess) {
     if (r.twState.timer) clearInterval(r.twState.timer);
     r.twState = null;
   }
+  r._renderedTurnCount = 0;
 }
 
 /* ═══════════════ 运行状态 ═══════════════ */
@@ -1048,6 +1191,7 @@ function setBusy(sess, busy) {
   runToggle.classList.remove('stopped');
   runToggle.classList.toggle('busy', busy);
   runLabel.textContent = busy ? t('status.running') : (state.bridgeReady ? t('status.ready') : t('status.disconnected'));
+  sendBtn.disabled = busy;
 }
 runToggle.addEventListener('click', async () => {
   const sess = activeSess();
@@ -1246,85 +1390,14 @@ async function pollSession(sess) {
   }
 }
 
-function removeUsedPendingFiles(usedFiles) {
-  if (!usedFiles.length) return;
-  const usedSids = new Set(usedFiles.map(f => f.sid));
-  state.pendingFiles = state.pendingFiles.filter(f => !usedSids.has(f.sid));
-  renderThumbStrip();
-}
-
-function clearDraft(sess) {
-  flushTypewriter(sess);
-  const r = rt(sess);
-  if (r.draftEl) { r.draftEl.remove(); r.draftEl = null; r.draftText = ''; }
-}
-
-async function waitSessionIdle(sess, maxMs = 4000) {
-  const start = Date.now();
-  while (rt(sess).busy && Date.now() - start < maxMs) {
-    await new Promise(z => setTimeout(z, 100));
-  }
-  return !rt(sess).busy;
-}
-
-function setMsgLoading(on) {
-  if (msgArea) msgArea.classList.toggle('is-loading', !!on);
-  if (msgLoading) {
-    msgLoading.hidden = !on;
-    if (on) scrollBottom();
-  }
-}
-
-function setComposerLocked(on) {
-  if (composerEl) composerEl.classList.toggle('is-locked', !!on);
-  if (inputEl) inputEl.readOnly = !!on;
-  if (sendBtn) {
-    sendBtn.disabled = !!on;
-    sendBtn.classList.toggle('is-busy', !!on);
-    sendBtn.setAttribute('aria-busy', on ? 'true' : 'false');
-  }
-}
-
-/** stapp.py 同款：运行中再发 → cancel 当前轮次，等 idle 后再提交新 prompt */
-async function interruptBeforeSend(sess) {
-  if (!rt(sess).busy) return true;
-  const t0 = Date.now();
-  setMsgLoading(true);
-  try {
-    clearDraft(sess);
-    try {
-      const res = await window.ga.rpc('session/cancel', { sessionId: sess.bridgeSessionId || sess.id });
-      if (res?.error) throw new Error(res.error.message || res.error);
-    } catch (e) {
-      showChanToast(t('err.stop') + ': ' + (e.message || e), '', 'err');
-      return false;
-    }
-    showChanToast(t('sys.interruptPrev.hint'), '', 'info');
-    const idle = await waitSessionIdle(sess);
-    clearDraft(sess);
-    if (!idle) {
-      showChanToast(t('err.interruptTimeout'), '', 'err');
-      return false;
-    }
-    return true;
-  } finally {
-    const wait = Math.max(0, MIN_MSG_LOADING_MS - (Date.now() - t0));
-    if (wait) await new Promise(r => setTimeout(r, wait));
-    setMsgLoading(false);
-  }
-}
-
 /* ═══════════════ 发送 / 取消 ═══════════════ */
 async function sendPrompt(text) {
   text = String(text || '').trim();
-  if (!text) return false;
-  if (!state.bridgeReady) { showError(t('err.bridge')); return false; }
-  if (!state.activeId) { await newSession(); if (!state.activeId) return false; }
+  if (!text) return;
+  if (!state.bridgeReady) { showError(t('err.bridge')); return; }
+  if (!state.activeId) { await newSession(); if (!state.activeId) return; }
   const sess = activeSess(); const r = rt(sess);
-  if (r.busy) {
-    const interrupted = await interruptBeforeSend(sess);
-    if (!interrupted) return false;
-  }
+  if (r.busy) return;
   const planPrefix = state.planMode ? t('presetPrompt.planMode') : '';
   const autoPrefix = state.autoMode ? t('presetPrompt.autoMode') : '';
   const expandedText = expandFilePlaceholders(text);
@@ -1341,8 +1414,7 @@ async function sendPrompt(text) {
   sess.messages.push(userMsg); appendMessage(sess, userMsg);
   sess.lastActiveTs = Date.now();
   if (sess.untitled || isUntitled(sess.title)) {
-    const titleText = stripAttachPlaceholders(text) || text;
-    sess.title = titleText.slice(0, 40) + (titleText.length > 40 ? '…' : '');
+    sess.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
     sess.untitled = false; renderSessionList();
   }
   saveSessions();
@@ -1360,16 +1432,15 @@ async function sendPrompt(text) {
     }
     const res = await window.ga.rpc('session/prompt', { sessionId: sid, prompt: composedPrompt, display: text, llmNo: state.llmNo });
     if (res?.error) throw new Error(res.error.message || res.error);
-    removeUsedPendingFiles(usedFiles);
+    state.pendingFiles = [];
+    renderThumbStrip();
     const uid = Number(res.userMessageId || res.result?.userMessageId || 0);
     if (uid) { r.seen.add(uid); r.lastId = Math.max(r.lastId, uid); }
     pollSession(sess);
-    return true;
   } catch (e) {
     const em = { role: 'error', content: e.message || String(e) };
     sess.messages.push(em); appendMessage(sess, em);
     setBusy(sess, false);
-    return false;
   }
 }
 async function cancelPrompt() {
@@ -1383,31 +1454,15 @@ async function cancelPrompt() {
 }
 
 /* ═══════════════ 输入区 / slash / 预设 ═══════════════ */
-async function submitInput() {
-  if (_submitInFlight) return;
+function submitInput() {
   const text = inputEl.value;
   if (!text.trim()) return;
-  if (text.trim().startsWith('/')) {
-    inputEl.value = '';
-    inputEl.style.height = 'auto';
-    handleSlash(text.trim());
-    return;
-  }
-  _submitInFlight = true;
-  setComposerLocked(true);
-  try {
-    const sent = await sendPrompt(text);
-    if (sent) {
-      inputEl.value = '';
-      inputEl.style.height = 'auto';
-    }
-  } finally {
-    _submitInFlight = false;
-    setComposerLocked(false);
-  }
+  inputEl.value = ''; inputEl.style.height = 'auto';
+  if (text.trim().startsWith('/')) { handleSlash(text.trim()); return; }
+  sendPrompt(text);
 }
 sendBtn.addEventListener('click', (e) => { e.preventDefault(); submitInput(); });
-inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitInput(); } });
+inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); submitInput(); } });
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
@@ -2407,7 +2462,7 @@ function showChanToast(title, detail, kind) {
   if (_chanToastTimer) clearTimeout(_chanToastTimer);
   root.innerHTML = '';
   const el = document.createElement('div');
-  el.className = `toast toast-${kind === 'err' ? 'err' : kind === 'info' ? 'info' : 'ok'}`;
+  el.className = `toast toast-${kind === 'ok' ? 'ok' : 'err'}`;
   const tEl = document.createElement('span');
   tEl.className = 'toast-title';
   tEl.textContent = title;
