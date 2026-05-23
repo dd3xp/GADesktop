@@ -294,8 +294,10 @@ body{ background:var(--bg); color:var(--txt); font-size:13px; overflow:hidden; }
   background:var(--line); cursor:pointer;
   transition:background .12s;
 }
+.chat-font-seg.on{ background:color-mix(in srgb, var(--blue) 55%, var(--line)); }
 .chat-font-seg.cur{ background:var(--blue); }
 .chat-font-seg:hover{ background:color-mix(in srgb, var(--blue) 35%, var(--line)); }
+.chat-font-seg.on:hover{ background:color-mix(in srgb, var(--blue) 55%, var(--line)); }
 .chat-font-seg.cur:hover{ background:var(--blue); }
 .chat-font-scale{
   display:flex; justify-content:space-between; margin-top:4px;

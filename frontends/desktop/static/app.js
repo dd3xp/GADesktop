@@ -526,7 +526,9 @@ function selectLang(code) {
 }
 function syncChatFontSegments(value) {
   document.querySelectorAll('.chat-font-seg').forEach(el => {
-    el.classList.toggle('cur', parseInt(el.dataset.value, 10) === value);
+    const v = parseInt(el.dataset.value, 10);
+    el.classList.toggle('on', v <= value);
+    el.classList.toggle('cur', v === value);
   });
   const stepper = document.getElementById('chat-font-stepper');
   if (stepper) {
